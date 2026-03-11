@@ -1,0 +1,840 @@
+<script>
+// =====================================================
+// アプリケーション状態
+// =====================================================
+
+const AppState = {
+  isAuthenticated: false,
+  role: null,
+  storeName: null,
+  businessDate: null,
+  casts: [],  // 朝礼用キャストリスト
+  shureiCasts: []  // 終礼用キャストリスト
+};
+
+// =====================================================
+// 初期化
+// =====================================================
+
+document.addEventListener('DOMContentLoaded', function() {
+  // セッションチェック
+  checkSession();
+
+  // イベントリスナー設定
+  setupEventListeners();
+});
+
+function checkSession() {
+  const session = sessionStorage.getItem('appSession');
+  if (session) {
+    const data = JSON.parse(session);
+    if (data.role && data.storeName !== undefined) {
+      AppState.isAuthenticated = true;
+      AppState.role = data.role;
+      AppState.storeName = data.storeName;
+      showScreen(data.role);
+    }
+  }
+  hideLoading();
+}
+
+function setupEventListeners() {
+  // ログイン
+  document.getElementById('roleSelect').addEventListener('change', onRoleChange);
+  document.getElementById('loginButton').addEventListener('click', onLogin);
+
+  // 店責用
+  document.getElementById('managerLogoutButton').addEventListener('click', onLogout);
+  document.getElementById('addCastButton').addEventListener('click', onAddCast);
+  document.getElementById('saveChoreiButton').addEventListener('click', onSaveChorei);
+  document.getElementById('saveShureiButton').addEventListener('click', onSaveShurei);
+  document.getElementById('addIssueButton').addEventListener('click', onAddIssue);
+
+  // キャスト用
+  document.getElementById('castLogoutButton').addEventListener('click', onLogout);
+  document.getElementById('saveGoalButton').addEventListener('click', onSaveGoal);
+  document.getElementById('loadPerformanceButton').addEventListener('click', onLoadPerformance);
+
+  // 管理者用
+  document.getElementById('adminLogoutButton').addEventListener('click', onLogout);
+  document.getElementById('loadSummaryButton').addEventListener('click', onLoadSummary);
+
+  // タブ切り替え
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', onTabChange);
+  });
+}
+
+// =====================================================
+// ログイン処理
+// =====================================================
+
+function onRoleChange(e) {
+  const role = e.target.value;
+  const storeGroup = document.getElementById('storeGroup');
+
+  if (role === 'manager' || role === 'cast') {
+    storeGroup.style.display = 'block';
+    loadStores();
+  } else {
+    storeGroup.style.display = 'none';
+  }
+}
+
+function loadStores() {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        const select = document.getElementById('storeSelect');
+        select.innerHTML = '<option value="">選択してください</option>';
+        result.stores.forEach(function(store) {
+          const option = document.createElement('option');
+          option.value = store.name;
+          option.textContent = store.name;
+          select.appendChild(option);
+        });
+      }
+    })
+    .getStoreList();
+}
+
+function onLogin() {
+  const role = document.getElementById('roleSelect').value;
+  const password = document.getElementById('passwordInput').value;
+  const storeName = document.getElementById('storeSelect').value;
+
+  if (!role) {
+    showAlert('loginAlert', 'error', 'ロールを選択してください');
+    return;
+  }
+
+  if ((role === 'manager' || role === 'cast') && !storeName) {
+    showAlert('loginAlert', 'error', '店舗を選択してください');
+    return;
+  }
+
+  if (!password) {
+    showAlert('loginAlert', 'error', 'パスワードを入力してください');
+    return;
+  }
+
+  showLoading();
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      if (result.success) {
+        AppState.isAuthenticated = true;
+        AppState.role = result.role;
+        AppState.storeName = result.storeName;
+
+        // セッション保存
+        sessionStorage.setItem('appSession', JSON.stringify({
+          role: result.role,
+          storeName: result.storeName
+        }));
+
+        showScreen(result.role);
+      } else {
+        showAlert('loginAlert', 'error', result.error || 'ログインに失敗しました');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showAlert('loginAlert', 'error', 'エラーが発生しました: ' + error);
+    })
+    .authenticate(role, password, storeName);
+}
+
+function onLogout() {
+  sessionStorage.removeItem('appSession');
+  AppState.isAuthenticated = false;
+  AppState.role = null;
+  AppState.storeName = null;
+
+  // 画面をリセット
+  document.getElementById('roleSelect').value = '';
+  document.getElementById('storeSelect').value = '';
+  document.getElementById('passwordInput').value = '';
+
+  showLoginScreen();
+}
+
+// =====================================================
+// 画面切り替え
+// =====================================================
+
+function showScreen(role) {
+  hideAllScreens();
+
+  // 営業日取得
+  loadBusinessDate();
+
+  if (role === 'manager') {
+    document.getElementById('managerScreen').classList.remove('hidden');
+    document.getElementById('managerStoreName').textContent = AppState.storeName;
+    loadChoreiData();
+    loadIssues();
+  } else if (role === 'cast') {
+    document.getElementById('castScreen').classList.remove('hidden');
+    document.getElementById('castStoreName').textContent = AppState.storeName;
+  } else if (role === 'admin') {
+    document.getElementById('adminScreen').classList.remove('hidden');
+    loadDashboard();
+    loadAdminIssues();
+    loadStoresForAdmin();
+  }
+}
+
+function showLoginScreen() {
+  hideAllScreens();
+  document.getElementById('loginScreen').classList.remove('hidden');
+}
+
+function hideAllScreens() {
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('managerScreen').classList.add('hidden');
+  document.getElementById('castScreen').classList.add('hidden');
+  document.getElementById('adminScreen').classList.add('hidden');
+}
+
+function onTabChange(e) {
+  const tab = e.target;
+  const tabName = tab.dataset.tab;
+  const parent = tab.closest('.tabs').parentElement;
+
+  // タブのactive切り替え
+  tab.closest('.tabs').querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+
+  // コンテンツの切り替え
+  if (tabName) {
+    // メインタブ
+    document.querySelectorAll('.tab-content').forEach(content => {
+      content.classList.remove('active');
+    });
+    const targetContent = document.getElementById(tabName + 'Tab');
+    if (targetContent) {
+      targetContent.classList.add('active');
+    }
+  } else if (tab.dataset.issueTab) {
+    // 店責用課題タブ
+    loadIssues(tab.dataset.issueTab);
+  } else if (tab.dataset.adminIssueTab) {
+    // 管理者用課題タブ
+    loadAdminIssues(tab.dataset.adminIssueTab);
+  }
+}
+
+// =====================================================
+// 営業日
+// =====================================================
+
+function loadBusinessDate() {
+  google.script.run
+    .withSuccessHandler(function(date) {
+      AppState.businessDate = date;
+      if (document.getElementById('managerBusinessDate')) {
+        document.getElementById('managerBusinessDate').textContent = date;
+      }
+      if (document.getElementById('castBusinessDate')) {
+        document.getElementById('castBusinessDate').textContent = date;
+      }
+      if (document.getElementById('adminBusinessDate')) {
+        document.getElementById('adminBusinessDate').textContent = date;
+      }
+    })
+    .getBusinessDate();
+}
+
+// =====================================================
+// 店責用：朝礼
+// =====================================================
+
+function loadChoreiData() {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        // 店舗ニュース・個人ニュース
+        if (result.storeNews) {
+          document.getElementById('storeNewsInput').value = result.storeNews;
+        }
+        if (result.personalNews) {
+          document.getElementById('personalNewsInput').value = result.personalNews;
+        }
+
+        // キャスト一覧
+        AppState.casts = result.casts || [];
+        renderCastList();
+      }
+    })
+    .getChoreiData(AppState.storeName);
+}
+
+function renderCastList() {
+  const container = document.getElementById('castList');
+  container.innerHTML = '';
+
+  if (AppState.casts.length === 0) {
+    container.innerHTML = '<p class="text-center text-light">キャストがいません。「+ キャスト追加」ボタンで追加してください。</p>';
+    return;
+  }
+
+  AppState.casts.forEach(function(cast, index) {
+    const row = document.createElement('div');
+    row.className = 'cast-row';
+    row.innerHTML = `
+      <div class="cast-row-header">
+        <span class="cast-row-title">キャスト ${index + 1}</span>
+        <button class="btn btn-sm btn-outline" onclick="removeCast(${index})">削除</button>
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="form-group mb-10">
+            <label class="required">名前</label>
+            <input type="text" class="form-control cast-name" value="${cast.castName || ''}" data-index="${index}">
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group mb-10">
+            <label>契約時間</label>
+            <input type="text" class="form-control cast-contract" value="${cast.contractTime || ''}" data-index="${index}" placeholder="例: 18:00-23:00">
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group mb-10">
+            <label>送迎</label>
+            <label class="toggle">
+              <input type="checkbox" class="cast-pickup" data-index="${index}" ${cast.pickup ? 'checked' : ''}>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="form-group mb-0">
+        <label>目標メモ（キャスト入力）</label>
+        <div class="text-light" style="font-size: 0.875rem; margin-bottom: 5px;">${cast.goalMemo || '未入力'}</div>
+      </div>
+      <div class="form-group mb-0">
+        <label>目標メモ（店責用）</label>
+        <textarea class="form-control cast-manager-memo" data-index="${index}" placeholder="軌道修正など">${cast.managerMemo || ''}</textarea>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function onAddCast() {
+  AppState.casts.push({
+    castName: '',
+    contractTime: '',
+    pickup: false,
+    goalMemo: '',
+    managerMemo: ''
+  });
+  renderCastList();
+}
+
+function removeCast(index) {
+  AppState.casts.splice(index, 1);
+  renderCastList();
+}
+
+function onSaveChorei() {
+  // 入力値取得
+  const nameInputs = document.querySelectorAll('.cast-name');
+  const contractInputs = document.querySelectorAll('.cast-contract');
+  const pickupInputs = document.querySelectorAll('.cast-pickup');
+  const managerMemoInputs = document.querySelectorAll('.cast-manager-memo');
+
+  const casts = [];
+  for (let i = 0; i < nameInputs.length; i++) {
+    const castName = nameInputs[i].value.trim();
+    if (!castName) {
+      showAlert('choreiAlert', 'error', 'キャスト名を入力してください');
+      return;
+    }
+    casts.push({
+      castName: castName,
+      contractTime: contractInputs[i].value,
+      pickup: pickupInputs[i].checked,
+      managerMemo: managerMemoInputs[i].value,
+      goalMemo: AppState.casts[i]?.goalMemo || ''
+    });
+  }
+
+  const data = {
+    storeName: AppState.storeName,
+    casts: casts,
+    storeNews: document.getElementById('storeNewsInput').value,
+    personalNews: document.getElementById('personalNewsInput').value
+  };
+
+  showLoading();
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      if (result.success) {
+        showAlert('choreiAlert', 'success', '保存しました');
+        loadChoreiData(); // 再読込して目標メモを反映
+      } else {
+        showAlert('choreiAlert', 'error', result.error || '保存に失敗しました');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showAlert('choreiAlert', 'error', 'エラーが発生しました: ' + error);
+    })
+    .saveChorei(data);
+}
+
+// =====================================================
+// 店責用：終礼
+// =====================================================
+
+function loadShureiData() {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        document.getElementById('totalSalesInput').value = result.totalSales || '';
+        AppState.shureiCasts = result.casts || [];
+        renderShureiCastList();
+      }
+    })
+    .getShureiData(AppState.storeName);
+}
+
+function renderShureiCastList() {
+  const container = document.getElementById('shureiCastList');
+  container.innerHTML = '';
+
+  if (AppState.shureiCasts.length === 0) {
+    container.innerHTML = '<p class="text-center text-light">朝礼データがありません。先に朝礼を入力してください。</p>';
+    return;
+  }
+
+  AppState.shureiCasts.forEach(function(cast, index) {
+    const row = document.createElement('div');
+    row.className = 'cast-row';
+    row.innerHTML = `
+      <div class="cast-row-header">
+        <span class="cast-row-title">${cast.castName}</span>
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="form-group mb-10">
+            <label>ドリンク杯数</label>
+            <input type="number" class="form-control shurei-drink" value="${cast.drinkCount || 0}" data-index="${index}">
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group mb-10">
+            <label>売上</label>
+            <input type="number" class="form-control shurei-sales" value="${cast.sales || 0}" data-index="${index}">
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group mb-10">
+            <label>目標達成</label>
+            <label class="toggle">
+              <input type="checkbox" class="shurei-achieved" data-index="${index}" ${cast.goalAchieved ? 'checked' : ''}>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function onSaveShurei() {
+  const drinkInputs = document.querySelectorAll('.shurei-drink');
+  const salesInputs = document.querySelectorAll('.shurei-sales');
+  const achievedInputs = document.querySelectorAll('.shurei-achieved');
+
+  const casts = [];
+  for (let i = 0; i < AppState.shureiCasts.length; i++) {
+    casts.push({
+      castName: AppState.shureiCasts[i].castName,
+      drinkCount: parseInt(drinkInputs[i].value) || 0,
+      sales: parseInt(salesInputs[i].value) || 0,
+      goalAchieved: achievedInputs[i].checked
+    });
+  }
+
+  const data = {
+    storeName: AppState.storeName,
+    casts: casts,
+    totalSales: parseInt(document.getElementById('totalSalesInput').value) || 0
+  };
+
+  showLoading();
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      if (result.success) {
+        showAlert('shureiAlert', 'success', '保存しました');
+      } else {
+        showAlert('shureiAlert', 'error', result.error || '保存に失敗しました');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showAlert('shureiAlert', 'error', 'エラーが発生しました: ' + error);
+    })
+    .saveShurei(data);
+}
+
+// タブ切り替え時に終礼データを読み込む
+const shureiTabObserver = new MutationObserver(function(mutations) {
+  mutations.forEach(function(mutation) {
+    if (mutation.target.id === 'shureiTab' && mutation.target.classList.contains('active')) {
+      loadShureiData();
+    }
+  });
+});
+
+// DOM読み込み後にオブザーバーを設定
+setTimeout(function() {
+  const shureiTab = document.getElementById('shureiTab');
+  if (shureiTab) {
+    shureiTabObserver.observe(shureiTab, { attributes: true, attributeFilter: ['class'] });
+  }
+}, 100);
+
+// =====================================================
+// 課題管理（店責用）
+// =====================================================
+
+function loadIssues(status) {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        renderIssues(result.issues, 'issuesList');
+      }
+    })
+    .getIssues(status || 'all');
+}
+
+function renderIssues(issues, containerId) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+
+  if (issues.length === 0) {
+    container.innerHTML = '<p class="text-center text-light">課題はありません</p>';
+    return;
+  }
+
+  issues.forEach(function(issue) {
+    const row = document.createElement('div');
+    row.className = 'card mb-10';
+
+    let statusClass = 'badge-info';
+    if (issue.status === '未対応') statusClass = 'badge-error';
+    if (issue.status === '対応中') statusClass = 'badge-warning';
+    if (issue.status === '完了') statusClass = 'badge-success';
+
+    row.innerHTML = `
+      <div class="row" style="align-items: center;">
+        <div class="col-2">
+          <div class="mb-10">
+            <span class="badge ${statusClass}">${issue.status}</span>
+            <span style="margin-left: 10px; font-size: 0.875rem; color: #666;">${issue.date}</span>
+          </div>
+          <div style="font-weight: 500;">${issue.storeName} / ${issue.reporter}</div>
+        </div>
+        <div class="col-2">
+          <div>${issue.content}</div>
+          ${issue.feedback ? '<div style="margin-top: 8px; padding: 8px; background: #E8F5E9; border-radius: 4px; font-size: 0.875rem;">FB: ' + issue.feedback + '</div>' : ''}
+        </div>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function onAddIssue() {
+  const content = document.getElementById('issueContentInput').value.trim();
+  const reporter = document.getElementById('issueReporterInput').value.trim();
+
+  if (!content) {
+    showAlert('shureiAlert', 'error', '内容を入力してください');
+    return;
+  }
+
+  if (!reporter) {
+    showAlert('shureiAlert', 'error', '起票者を入力してください');
+    return;
+  }
+
+  showLoading();
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      if (result.success) {
+        showAlert('shureiAlert', 'success', '課題を追加しました');
+        document.getElementById('issueContentInput').value = '';
+        document.getElementById('issueReporterInput').value = '';
+        loadIssues();
+      } else {
+        showAlert('shureiAlert', 'error', result.error || '追加に失敗しました');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showAlert('shureiAlert', 'error', 'エラーが発生しました: ' + error);
+    })
+    .addIssue(AppState.storeName, reporter, content);
+}
+
+// =====================================================
+// キャスト用：目標入力
+// =====================================================
+
+function onSaveGoal() {
+  const castName = document.getElementById('castNameInput').value.trim();
+  const goal = document.getElementById('goalInput').value.trim();
+
+  if (!castName) {
+    showAlert('goalAlert', 'error', '名前を入力してください');
+    return;
+  }
+
+  if (!goal) {
+    showAlert('goalAlert', 'error', '目標を入力してください');
+    return;
+  }
+
+  showLoading();
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      if (result.success) {
+        showAlert('goalAlert', 'success', '目標を保存しました');
+      } else {
+        showAlert('goalAlert', 'error', result.error || '保存に失敗しました');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      showAlert('goalAlert', 'error', 'エラーが発生しました: ' + error);
+    })
+    .saveCastGoal(AppState.storeName, castName, goal);
+}
+
+// =====================================================
+// キャスト用：実績閲覧
+// =====================================================
+
+function onLoadPerformance() {
+  const castName = document.getElementById('performanceCastNameInput').value.trim();
+
+  if (!castName) {
+    showAlert('performanceAlert', 'error', '名前を入力してください');
+    return;
+  }
+
+  document.getElementById('performanceLoading').classList.remove('hidden');
+  document.getElementById('performanceResult').innerHTML = '';
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      document.getElementById('performanceLoading').classList.add('hidden');
+      if (result.success) {
+        renderPerformance(result);
+      } else {
+        document.getElementById('performanceResult').innerHTML =
+          '<div class="alert alert-error">' + (result.error || '実績の取得に失敗しました') + '</div>';
+      }
+    })
+    .withFailureHandler(function(error) {
+      document.getElementById('performanceLoading').classList.add('hidden');
+      document.getElementById('performanceResult').innerHTML =
+        '<div class="alert alert-error">エラーが発生しました: ' + error + '</div>';
+    })
+    .getCastPerformance(AppState.storeName, castName);
+}
+
+function renderPerformance(result) {
+  const container = document.getElementById('performanceResult');
+
+  if (!result.today) {
+    container.innerHTML = '<div class="alert alert-info">本日の実績はまだ登録されていません</div>';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">本日の売上</div>
+        <div class="info-value">¥${result.today.sales.toLocaleString()}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">本日のドリンク杯数</div>
+        <div class="info-value">${result.today.drinkCount}杯</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">目標達成</div>
+        <div class="info-value">
+          <span class="badge ${result.today.goalAchieved ? 'badge-success' : 'badge-error'}">
+            ${result.today.goalAchieved ? '達成' : '未達成'}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="mt-20 mb-10">月間累計</h3>
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">月間売上合計</div>
+        <div class="info-value">¥${result.monthly.totalSales.toLocaleString()}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">月間ドリンク合計</div>
+        <div class="info-value">${result.monthly.totalDrinks}杯</div>
+      </div>
+    </div>
+  `;
+}
+
+// =====================================================
+// 管理者用：ダッシュボード
+// =====================================================
+
+function loadDashboard() {
+  document.getElementById('dashboardLoading').classList.remove('hidden');
+  document.getElementById('dashboardContent').innerHTML = '';
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      document.getElementById('dashboardLoading').classList.add('hidden');
+      if (result.success) {
+        renderDashboard(result.data);
+      }
+    })
+    .getAllStoresData();
+}
+
+function renderDashboard(data) {
+  const container = document.getElementById('dashboardContent');
+
+  let html = '<table class="table">';
+  html += '<thead><tr><th>店舗名</th><th>キャスト数</th><th>店舗全体売上</th></tr></thead>';
+  html += '<tbody>';
+
+  data.forEach(function(store) {
+    html += `
+      <tr>
+        <td>${store.storeName}</td>
+        <td>${store.castCount}人</td>
+        <td>¥${store.totalSales.toLocaleString()}</td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function loadAdminIssues(status) {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        renderAdminIssues(result.issues);
+      }
+    })
+    .getIssues(status || 'all');
+}
+
+function renderAdminIssues(issues) {
+  renderIssues(issues, 'adminIssuesList');
+}
+
+function loadStoresForAdmin() {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        const select = document.getElementById('summaryStoreSelect');
+        select.innerHTML = '<option value="">全店舗</option>';
+        result.stores.forEach(function(store) {
+          const option = document.createElement('option');
+          option.value = store.name;
+          option.textContent = store.name;
+          select.appendChild(option);
+        });
+      }
+    })
+    .getStoreList();
+}
+
+function onLoadSummary() {
+  const storeName = document.getElementById('summaryStoreSelect').value;
+
+  document.getElementById('summaryResult').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        renderSummary(result.summary);
+      }
+    })
+    .getMonthlySummary(storeName || null);
+}
+
+function renderSummary(summary) {
+  const container = document.getElementById('summaryResult');
+
+  container.innerHTML = `
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">対象月</div>
+        <div class="info-value" style="font-size: 1.25rem;">${summary.month}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">総売上</div>
+        <div class="info-value">¥${summary.totalSales.toLocaleString()}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">総ドリンク杯数</div>
+        <div class="info-value">${summary.totalDrinks}杯</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">目標達成率</div>
+        <div class="info-value">${summary.achievementRate}%</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">達成数 / 総数</div>
+        <div class="info-value" style="font-size: 1.25rem;">${summary.achievedCount} / ${summary.totalCount}</div>
+      </div>
+    </div>
+  `;
+}
+
+// =====================================================
+// ユーティリティ
+// =====================================================
+
+function showLoading() {
+  document.getElementById('loading').classList.remove('hidden');
+}
+
+function hideLoading() {
+  document.getElementById('loading').classList.add('hidden');
+}
+
+function showAlert(elementId, type, message) {
+  const alert = document.getElementById(elementId);
+  alert.className = 'alert alert-' + type;
+  alert.textContent = message;
+  alert.classList.remove('hidden');
+
+  setTimeout(function() {
+    alert.classList.add('hidden');
+  }, 5000);
+}
+</script>

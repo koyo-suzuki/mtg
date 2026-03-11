@@ -1,0 +1,24 @@
+{
+  "name": "chorei-shurei-system",
+  "version": "1.0.0",
+  "description": "朝礼・終礼シートシステム - ローカル開発版",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "init-db": "node scripts/init-db.js",
+    "seed": "node scripts/seed-data.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

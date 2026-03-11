@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>朝礼・終礼シートシステム</title>
+  <link rel="stylesheet" href="/styles/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- ログイン画面（ロール選択） -->
+    <div id="loginScreen" class="container-sm">
+      <div class="header text-center">
+        <h1>朝礼・終礼シート</h1>
+        <div class="header-subtitle">株式会社esplanade</div>
+      </div>
+
+      <div class="card mt-20">
+        <div class="card-title">誰で使いますか？</div>
+
+        <div class="form-group">
+          <label class="required">選んでね</label>
+          <select id="roleSelect" class="form-control">
+            <option value="">選択してください</option>
+            <option value="manager">店責</option>
+            <option value="cast">キャスト</option>
+            <option value="admin">専任</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="storeGroup" style="display: none;">
+          <label class="required">お店を選択</label>
+          <select id="storeSelect" class="form-control">
+            <option value="">選択してください</option>
+          </select>
+        </div>
+
+        <button id="loginButton" class="btn btn-primary btn-block">始める</button>
+      </div>
+    </div>
+
+    <!-- 店責用画面 -->
+    <div id="managerScreen" class="container hidden">
+      <div class="header">
+        <div class="row">
+          <div class="col">
+            <h1>店責用画面</h1>
+          </div>
+          <div class="col text-right">
+            <span id="managerStoreName"></span>
+            <button id="managerBackButton" class="btn btn-sm btn-outline" style="margin-left: 10px;">戻る</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="current-date text-center">
+        日付: <span id="managerBusinessDate"></span>
+      </div>
+
+      <!-- タブ -->
+      <div class="tabs">
+        <div class="tab active" data-tab="chorei">朝礼</div>
+        <div class="tab" data-tab="shurei">終礼</div>
+        <div class="tab" data-tab="issues">伝言板</div>
+        <div class="tab" data-tab="settings">設定</div>
+      </div>
+
+      <!-- 朝礼タブ -->
+      <div id="choreiTab" class="tab-content active">
+        <div class="card">
+          <div class="card-title">朝礼</div>
+
+          <div id="choreiAlert" class="alert alert-success hidden"></div>
+
+          <h3>スタッフ</h3>
+
+          <div id="castList"></div>
+
+          <button id="addCastButton" class="btn btn-secondary btn-block mt-20">+ 追加</button>
+          <button id="saveChoreiButton" class="btn btn-primary btn-block mt-10">保存</button>
+        </div>
+      </div>
+
+      <!-- 終礼タブ -->
+      <div id="shureiTab" class="tab-content">
+        <div class="card reflection-card">
+          <div class="card-title">終礼シート</div>
+
+          <div id="shureiAlert" class="alert alert-success hidden"></div>
+
+          <div class="form-group">
+            <label>売上合計</label>
+            <input type="number" id="totalSalesInput" class="form-control" placeholder="0">
+          </div>
+
+          <div class="mb-20">
+            <h3>結果</h3>
+          </div>
+
+          <div id="shureiCastList"></div>
+
+          <button id="saveShureiButton" class="btn btn-primary btn-block mt-20">保存</button>
+        </div>
+      </div>
+
+      <!-- 課題管理タブ -->
+      <div id="issuesTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">伝言板</div>
+
+          <div id="issuesAlert" class="alert alert-success hidden"></div>
+
+          <div class="tabs">
+            <div class="tab active" data-issue-tab="未対応">未</div>
+            <div class="tab" data-issue-tab="対応中">中</div>
+            <div class="tab" data-issue-tab="完了">済</div>
+          </div>
+
+          <div id="issuesList"></div>
+        </div>
+
+        <!-- 課題追加 -->
+        <div class="card">
+          <div class="card-title">伝言を書く</div>
+
+          <div class="form-group">
+            <label class="required">内容</label>
+            <textarea id="issueContentInput" class="form-control" placeholder="伝言内容"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="required">名前</label>
+            <input type="text" id="issueReporterInput" class="form-control" placeholder="名前">
+          </div>
+
+          <button id="addIssueButton" class="btn btn-accent">送る</button>
+        </div>
+      </div>
+
+      <!-- 表示設定タブ -->
+      <div id="settingsTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">設定</div>
+
+          <div id="settingsAlert" class="alert alert-success hidden"></div>
+
+          <div class="form-group">
+            <label>他の人のを見せる</label>
+            <label class="toggle">
+              <input type="checkbox" id="showOtherCastsToggle">
+              <span class="toggle-slider"></span>
+            </label>
+            <small class="text-light">オフで自分だけ見える</small>
+          </div>
+
+          <button id="saveSettingsButton" class="btn btn-primary btn-block">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- キャスト用画面 -->
+    <div id="castScreen" class="container hidden">
+      <div class="header">
+        <div class="row">
+          <div class="col">
+            <h1>キャスト用画面</h1>
+          </div>
+          <div class="col text-right">
+            <button id="castBackButton" class="btn btn-sm btn-outline">戻る</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="store-info">
+        <div class="store-info-name" id="castStoreName"></div>
+      </div>
+
+      <div class="current-date text-center">
+        日付: <span id="castBusinessDate"></span>
+      </div>
+
+      <!-- タブ -->
+      <div class="tabs">
+        <div class="tab active" data-tab="goal">入力</div>
+        <div class="tab" data-tab="choreiView">朝礼</div>
+        <div class="tab" data-tab="shureiView">終礼</div>
+        <div class="tab" data-tab="performance">今日</div>
+        <div class="tab" data-tab="history">履歴</div>
+      </div>
+
+      <!-- 目標・送迎入力タブ -->
+      <div id="goalTab" class="tab-content active">
+        <div class="card motivational-card">
+          <div class="card-title">目標</div>
+
+          <div id="goalAlert" class="alert alert-success hidden"></div>
+
+          <div class="form-group">
+            <label class="required">名前</label>
+            <input type="text" id="castNameInput" class="form-control" placeholder="名前">
+          </div>
+
+          <div class="form-group">
+            <label class="required">目標</label>
+            <textarea id="goalInput" class="form-control" placeholder="今日の目標"></textarea>
+          </div>
+
+          <button id="saveGoalButton" class="btn btn-primary btn-block">保存</button>
+        </div>
+
+        <div class="card mt-20">
+          <div class="card-title">送迎</div>
+
+          <div id="pickupAlert" class="alert alert-success hidden"></div>
+
+          <div class="form-group">
+            <label>送迎が必要</label>
+            <label class="toggle">
+              <input type="checkbox" id="pickupToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="form-group" id="pickupLocationGroup" style="display: none;">
+            <label>送迎先</label>
+            <input type="text" id="pickupLocationInput" class="form-control" placeholder="場所">
+          </div>
+
+          <button id="savePickupButton" class="btn btn-secondary btn-block">保存</button>
+        </div>
+      </div>
+
+      <!-- 朝礼閲覧タブ -->
+      <div id="choreiViewTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">朝礼</div>
+
+          <div id="choreiViewLoading" class="loading hidden">
+            <div class="spinner"></div>
+          </div>
+
+          <div id="choreiViewContent"></div>
+        </div>
+      </div>
+
+      <!-- 終礼閲覧タブ -->
+      <div id="shureiViewTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">終礼</div>
+
+          <div id="shureiViewLoading" class="loading hidden">
+            <div class="spinner"></div>
+          </div>
+
+          <div id="shureiViewContent"></div>
+        </div>
+      </div>
+
+      <!-- 実績閲覧タブ -->
+      <div id="performanceTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">今日の結果</div>
+
+          <div id="performanceLoading" class="loading hidden">
+            <div class="spinner"></div>
+          </div>
+
+          <div id="performanceContent">
+            <div class="form-group">
+              <label class="required">名前</label>
+              <input type="text" id="performanceCastNameInput" class="form-control" placeholder="名前">
+            </div>
+
+            <button id="loadPerformanceButton" class="btn btn-primary btn-block">見る</button>
+
+            <div id="performanceResult" class="mt-20"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 時系列実績タブ -->
+      <div id="historyTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">履歴</div>
+
+          <div id="historyLoading" class="loading hidden">
+            <div class="spinner"></div>
+          </div>
+
+          <div id="historyContent">
+            <div class="form-group">
+              <label class="required">名前</label>
+              <input type="text" id="historyCastNameInput" class="form-control" placeholder="名前">
+            </div>
+
+            <div class="form-group">
+              <label>件数</label>
+              <select id="historyLimitSelect" class="form-control">
+                <option value="10">10件</option>
+                <option value="30" selected>30件</option>
+                <option value="60">60件</option>
+              </select>
+            </div>
+
+            <button id="loadHistoryButton" class="btn btn-primary btn-block">見る</button>
+
+            <div id="historyResult" class="mt-20"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 管理者用ダッシュボード -->
+    <div id="adminScreen" class="container hidden">
+      <div class="header">
+        <div class="row">
+          <div class="col">
+            <h1>本部画面</h1>
+          </div>
+          <div class="col text-right">
+            <button id="adminBackButton" class="btn btn-sm btn-outline">戻る</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="current-date text-center">
+        日付: <span id="adminBusinessDate"></span>
+      </div>
+
+      <!-- タブ -->
+      <div class="tabs">
+        <div class="tab active" data-tab="dashboard">全店</div>
+        <div class="tab" data-tab="adminIssues">伝言</div>
+        <div class="tab" data-tab="summary">月間</div>
+      </div>
+
+      <!-- 全店舗概況タブ -->
+      <div id="dashboardTab" class="tab-content active">
+        <div class="card">
+          <div class="card-title">全店状況</div>
+
+          <div id="dashboardLoading" class="loading">
+            <div class="spinner"></div>
+          </div>
+
+          <div id="dashboardContent"></div>
+        </div>
+      </div>
+
+      <!-- 課題管理タブ -->
+      <div id="adminIssuesTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">伝言板</div>
+
+          <div class="tabs">
+            <div class="tab active" data-admin-issue-tab="未対応">未</div>
+            <div class="tab" data-admin-issue-tab="対応中">中</div>
+            <div class="tab" data-admin-issue-tab="完了">済</div>
+          </div>
+
+          <div id="adminIssuesList"></div>
+        </div>
+      </div>
+
+      <!-- 月間集計タブ -->
+      <div id="summaryTab" class="tab-content">
+        <div class="card">
+          <div class="card-title">月間まとめ</div>
+
+          <div class="form-group">
+            <label>店舗</label>
+            <select id="summaryStoreSelect" class="form-control">
+              <option value="">全部</option>
+            </select>
+          </div>
+
+          <button id="loadSummaryButton" class="btn btn-primary">見る</button>
+
+          <div id="summaryResult" class="mt-20"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 自己採点フォームモーダル -->
+    <div id="selfEvaluationModal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>採点</h2>
+          <button id="closeModalButton" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="modalAlert" class="alert alert-success hidden"></div>
+
+          <div class="form-group">
+            <label class="required">名前</label>
+            <input type="text" id="modalCastNameInput" class="form-control" placeholder="名前">
+          </div>
+
+          <div class="form-group">
+            <label class="required">採点</label>
+            <div class="score-selector">
+              <button type="button" class="score-btn" data-score="1">1</button>
+              <button type="button" class="score-btn" data-score="2">2</button>
+              <button type="button" class="score-btn" data-score="3">3</button>
+              <button type="button" class="score-btn" data-score="4">4</button>
+              <button type="button" class="score-btn" data-score="5">5</button>
+            </div>
+            <input type="hidden" id="selfScoreInput">
+            <small class="text-light">1: 悪い → 5: 良い</small>
+          </div>
+
+          <div class="form-group">
+            <label>メモ</label>
+            <textarea id="reasonInput" class="form-control" placeholder="振り返り"></textarea>
+          </div>
+
+          <button id="submitSelfEvaluationButton" class="btn btn-primary btn-block">送る</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/scripts/app.js"></script>
+</body>
+</html>
