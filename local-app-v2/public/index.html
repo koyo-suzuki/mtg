@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>朝礼・終礼シート v2</title>
+  <link rel="stylesheet" href="/styles/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ========== ログイン画面 ========== -->
+    <div id="loginScreen" class="screen">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>朝礼・終礼シート</h1>
+          <div class="subtitle">株式会社esplanade</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Googleアカウントでログイン</div>
+          <p class="text-sm text-muted">（ローカル版: アカウントを選択してください）</p>
+
+          <div id="accountList" class="account-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== キャスト: 店舗選択画面 ========== -->
+    <div id="castStoreScreen" class="screen hidden">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>お店を選んでね</h1>
+          <div class="subtitle" id="castStoreGreeting"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">今日はどこで働く？</div>
+
+          <div id="castStoreList" class="store-list"></div>
+
+          <button id="castStoreBack" class="btn btn-text btn-block mt-20">戻る</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 店責画面 ========== -->
+    <div id="managerScreen" class="screen hidden">
+      <div class="container">
+        <div class="header">
+          <div class="row">
+            <div class="col">
+              <h1 id="managerStoreName"></h1>
+              <span class="text-sm text-muted">営業日: <span id="managerDate"></span></span>
+            </div>
+            <div class="col text-right">
+              <button id="managerBack" class="btn btn-outline btn-sm">戻る</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- タブ -->
+        <div class="tabs">
+          <div class="tab active" data-tab="chorei">朝礼</div>
+          <div class="tab" data-tab="shurei">終礼</div>
+        </div>
+
+        <!-- 朝礼タブ -->
+        <div id="choreiTab" class="tab-content active">
+          <div class="card">
+            <div class="card-title">出勤キャスト</div>
+            <div id="choreiAlert" class="alert hidden"></div>
+
+            <!-- キャスト追加エリア -->
+            <div class="add-cast-area">
+              <div class="card-title text-sm">キャストを追加</div>
+              <div class="cast-search-wrapper">
+                <input type="text" id="castSearchInput" class="form-control" placeholder="名前で検索..." autocomplete="off">
+                <div id="castSearchResults" class="cast-search-results hidden"></div>
+              </div>
+            </div>
+
+            <!-- キャスト一覧 -->
+            <div id="choreiCastList"></div>
+
+            <button id="saveChoreiBtn" class="btn btn-primary btn-block mt-20">保存</button>
+          </div>
+        </div>
+
+        <!-- 終礼タブ（今回はプレースホルダ） -->
+        <div id="shureiTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">終礼</div>
+            <p class="text-muted">（キャスト識別フローの確認後に実装）</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== キャスト画面 ========== -->
+    <div id="castScreen" class="screen hidden">
+      <div class="container">
+        <div class="header">
+          <div class="row">
+            <div class="col">
+              <h1 id="castScreenName"></h1>
+              <span class="text-sm text-muted"><span id="castScreenStore"></span> / 営業日: <span id="castDate"></span></span>
+            </div>
+            <div class="col text-right">
+              <button id="castBack" class="btn btn-outline btn-sm">戻る</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- タブ -->
+        <div class="tabs">
+          <div class="tab active" data-tab="castGoal">入力</div>
+          <div class="tab" data-tab="castChoreiView">朝礼</div>
+        </div>
+
+        <!-- 目標入力タブ -->
+        <div id="castGoalTab" class="tab-content active">
+          <div class="card goal-card">
+            <div class="card-title">今日の目標</div>
+            <div id="castGoalAlert" class="alert hidden"></div>
+
+            <div class="form-group">
+              <textarea id="castGoalInput" class="form-control" rows="3" placeholder="今日の目標を書いてね"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label style="color:#fff">来店予定</label>
+              <div class="row" style="align-items:center; gap:8px;">
+                <input type="number" id="castVisitorsInput" class="form-control" style="width:80px; flex:none;" min="0" value="0">
+                <span>組</span>
+              </div>
+            </div>
+
+            <button id="saveCastGoal" class="btn btn-primary btn-block">保存</button>
+          </div>
+
+        </div>
+
+        <!-- 朝礼閲覧タブ -->
+        <div id="castChoreiViewTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">今日の朝礼</div>
+            <div id="castChoreiViewContent"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 専任画面 ========== -->
+    <div id="adminScreen" class="screen hidden">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>本部</h1>
+          <div class="subtitle" id="adminName"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">店責代行する店舗を選択</div>
+          <div class="form-group">
+            <select id="adminStoreSelect" class="form-control">
+              <option value="">店舗を選択...</option>
+            </select>
+          </div>
+          <p class="text-sm text-muted">選択すると店責画面に入ります（自分はキャスト一覧に入りません）</p>
+        </div>
+
+        <button id="adminBack" class="btn btn-text btn-block">戻る</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/scripts/app.js"></script>
+</body>
+</html>

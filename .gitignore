@@ -1,6 +1,14 @@
 # Claude Code
 .claude/
 
+# Dependencies
+node_modules/
+
+# DB files
+*.db
+*.db-shm
+*.db-wal
+
 # Temporary files
 nul
 

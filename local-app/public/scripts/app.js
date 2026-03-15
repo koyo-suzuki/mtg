@@ -401,7 +401,22 @@ async function loadShureiData() {
     const result = await apiRequest(`/api/shurei/${encodeURIComponent(AppState.storeName)}`);
     if (result.success) {
       document.getElementById('totalSalesInput').value = result.totalSales || '';
-      AppState.shureiCasts = result.casts || [];
+      if (result.casts && result.casts.length > 0) {
+        AppState.shureiCasts = result.casts;
+      } else {
+        // 終礼データがなければ朝礼のキャスト一覧で初期化
+        const choreiResult = await apiRequest(`/api/chorei/${encodeURIComponent(AppState.storeName)}`);
+        if (choreiResult.success && choreiResult.casts && choreiResult.casts.length > 0) {
+          AppState.shureiCasts = choreiResult.casts.map(cast => ({
+            castName: cast.castName,
+            drinkCount: 0,
+            sales: 0,
+            goalAchieved: false
+          }));
+        } else {
+          AppState.shureiCasts = [];
+        }
+      }
       renderShureiCastList();
     }
   } catch (error) {
@@ -414,7 +429,7 @@ function renderShureiCastList() {
   container.innerHTML = '';
 
   if (AppState.shureiCasts.length === 0) {
-    container.innerHTML = '<p class="text-center text-light">朝礼のデータがありません。先に朝礼をやってください。</p>';
+    container.innerHTML = '<p class="text-center text-light">スタッフがいません。先に朝礼を保存してください。</p>';
     return;
   }
 
