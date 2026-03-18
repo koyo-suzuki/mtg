@@ -1,6 +1,9 @@
 {
   "name": "chorei-shurei-root",
   "private": true,
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "postinstall": "cd local-app-v2 && npm install",
     "start": "cd local-app-v2 && npm start"
