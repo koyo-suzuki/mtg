@@ -267,6 +267,184 @@ app.get('/api/my-stores/:gmail', (req, res) => {
 });
 
 // =====================================================
+// 終礼API
+// =====================================================
+
+/**
+ * 終礼データ保存（店責用）
+ */
+app.post('/api/shurei', (req, res) => {
+  const { storeId, salesCash, salesCard, salesPaypay, salesRoselink, monthlySales } = req.body;
+  const date = getBusinessDate();
+
+  try {
+    const salesTotal = (salesCash || 0) + (salesCard || 0) + (salesPaypay || 0) + (salesRoselink || 0);
+
+    const existing = db.prepare(
+      'SELECT id FROM shurei WHERE date = ? AND store_id = ?'
+    ).get(date, storeId);
+
+    if (existing) {
+      db.prepare(`
+        UPDATE shurei SET sales_cash = ?, sales_card = ?, sales_paypay = ?,
+          sales_roselink = ?, sales_total = ?, monthly_sales = ?
+        WHERE id = ?
+      `).run(salesCash || 0, salesCard || 0, salesPaypay || 0, salesRoselink || 0, salesTotal, monthlySales || 0, existing.id);
+    } else {
+      db.prepare(`
+        INSERT INTO shurei (date, store_id, sales_cash, sales_card, sales_paypay, sales_roselink, sales_total, monthly_sales)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(date, storeId, salesCash || 0, salesCard || 0, salesPaypay || 0, salesRoselink || 0, salesTotal, monthlySales || 0);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Shurei save error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 終礼データ取得
+ */
+app.get('/api/shurei/:storeId', (req, res) => {
+  const { storeId } = req.params;
+  const date = getBusinessDate();
+
+  try {
+    const row = db.prepare(`
+      SELECT sales_cash, sales_card, sales_paypay, sales_roselink, sales_total, monthly_sales
+      FROM shurei WHERE date = ? AND store_id = ?
+    `).get(date, parseInt(storeId));
+
+    res.json({ success: true, data: row || null, date });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// 自己採点API
+// =====================================================
+
+/**
+ * 自己採点保存
+ */
+app.post('/api/self-evaluation', (req, res) => {
+  const { storeId, gmail, castName, score, comment, isEarlyLeave } = req.body;
+  const date = getBusinessDate();
+
+  try {
+    const existing = db.prepare(
+      'SELECT id FROM self_evaluation WHERE date = ? AND store_id = ? AND gmail = ?'
+    ).get(date, storeId, gmail);
+
+    if (existing) {
+      db.prepare(`
+        UPDATE self_evaluation SET score = ?, comment = ?, is_early_leave = ?
+        WHERE id = ?
+      `).run(score, comment || '', isEarlyLeave ? 1 : 0, existing.id);
+    } else {
+      db.prepare(`
+        INSERT INTO self_evaluation (date, store_id, cast_name, gmail, score, comment, is_early_leave)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(date, storeId, castName, gmail, score, comment || '', isEarlyLeave ? 1 : 0);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Self-evaluation save error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 自己採点一覧取得（店舗・当日）
+ */
+app.get('/api/self-evaluation/:storeId', (req, res) => {
+  const { storeId } = req.params;
+  const date = getBusinessDate();
+
+  try {
+    const rows = db.prepare(`
+      SELECT cast_name, gmail, score, comment, is_early_leave
+      FROM self_evaluation
+      WHERE date = ? AND store_id = ?
+      ORDER BY created_at
+    `).all(date, parseInt(storeId));
+
+    res.json({ success: true, evaluations: rows, date });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// 伝言板API
+// =====================================================
+
+/**
+ * 伝言投稿
+ */
+app.post('/api/issues', (req, res) => {
+  const { storeId, reporter, content } = req.body;
+  const date = getBusinessDate();
+
+  try {
+    db.prepare(`
+      INSERT INTO issues (date, store_id, reporter, content)
+      VALUES (?, ?, ?, ?)
+    `).run(date, storeId, reporter, content);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Issue save error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 伝言一覧取得（店舗）
+ */
+app.get('/api/issues/:storeId', (req, res) => {
+  const { storeId } = req.params;
+
+  try {
+    const rows = db.prepare(`
+      SELECT id, date, reporter, content, status, feedback, completed_at, created_at
+      FROM issues
+      WHERE store_id = ?
+      ORDER BY created_at DESC
+      LIMIT 50
+    `).all(parseInt(storeId));
+
+    res.json({ success: true, issues: rows });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 伝言ステータス更新
+ */
+app.put('/api/issues/:id', (req, res) => {
+  const { id } = req.params;
+  const { status, feedback } = req.body;
+
+  try {
+    const completedAt = status === '完了' ? new Date().toISOString() : null;
+    db.prepare(`
+      UPDATE issues SET status = ?, feedback = ?, completed_at = ?
+      WHERE id = ?
+    `).run(status, feedback || '', completedAt, parseInt(id));
+
+    res.json({ success: true });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
 // サーバー起動
 // =====================================================
 

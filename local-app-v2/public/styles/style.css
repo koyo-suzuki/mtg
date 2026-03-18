@@ -510,6 +510,204 @@ select.form-control { appearance: auto; }
 }
 
 /* =====================================================
+   終礼
+   ===================================================== */
+.shurei-sales-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.shurei-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--primary-bg);
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+.shurei-total-label {
+  font-weight: 800;
+  font-size: 0.875rem;
+  color: var(--primary);
+}
+.shurei-total-value {
+  font-weight: 800;
+  font-size: 1.25rem;
+  color: var(--primary);
+}
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 20px 0;
+}
+
+/* 終礼閲覧（キャスト用） */
+.shurei-view-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.shurei-view-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.shurei-view-label { font-size: 0.75rem; font-weight: 700; color: var(--text-secondary); }
+.shurei-view-value { font-weight: 700; font-size: 0.9375rem; }
+.shurei-monthly-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.shurei-monthly-value { font-weight: 800; font-size: 1rem; color: var(--text); }
+
+/* =====================================================
+   自己採点
+   ===================================================== */
+.score-selector {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.score-btn {
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-weight: 700;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.score-btn:hover { border-color: var(--primary-light); color: var(--primary); }
+.score-btn.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+  box-shadow: 0 2px 8px rgba(108,92,231,0.3);
+}
+
+/* 自己採点一覧（店責用） */
+.eval-list { display: flex; flex-direction: column; gap: 10px; }
+.eval-item {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--card);
+}
+.eval-item.eval-pending { border-left: 3px solid var(--text-light); }
+.eval-item.eval-done { border-left: 3px solid var(--accent); }
+.eval-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.eval-item-name { font-weight: 700; font-size: 0.9375rem; }
+.eval-item-score {
+  font-weight: 800;
+  font-size: 0.875rem;
+  padding: 2px 10px;
+  border-radius: 6px;
+}
+.eval-item-score.eval-done { background: var(--accent-bg); color: #00A382; }
+.eval-item-score.eval-pending { background: var(--bg); color: var(--text-light); }
+.eval-item-comment { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; }
+.badge-early-leave { background: var(--danger-bg); color: var(--danger); margin-top: 6px; display: inline-block; }
+
+/* =====================================================
+   伝言板
+   ===================================================== */
+.issue-form { margin-bottom: 20px; }
+.issue-form .btn { margin-top: 8px; }
+
+.issue-filters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.issue-filter {
+  padding: 5px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.issue-filter.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.issue-filter:hover:not(.active) { border-color: var(--primary-light); color: var(--primary); }
+
+.issue-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--card);
+}
+.issue-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.issue-item-reporter { font-weight: 700; font-size: 0.875rem; }
+.issue-item-date { font-size: 0.6875rem; color: var(--text-light); }
+.issue-item-content { font-size: 0.875rem; line-height: 1.5; margin-bottom: 10px; }
+.issue-item-footer { display: flex; align-items: center; gap: 10px; }
+.issue-status {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+.status-pending { background: var(--danger-bg); color: var(--danger); }
+.status-progress { background: #FFF4D6; color: #D68910; }
+.status-done { background: var(--accent-bg); color: #00A382; }
+.issue-status-select {
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.issue-feedback {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  background: var(--bg);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-top: 8px;
+}
+.issue-feedback-input { margin-top: 8px; }
+.issue-feedback-input .form-control {
+  font-size: 0.8125rem;
+  padding: 6px 10px;
+}
+
+/* =====================================================
    レスポンシブ
    ===================================================== */
 @media (max-width: 600px) {
@@ -528,7 +726,15 @@ select.form-control { appearance: auto; }
   .table th, .table td { padding: 8px 6px; white-space: nowrap; }
   .card { overflow-x: auto; }
 
-  .tab { font-size: 0.75rem; padding: 8px 4px; }
+  .tab { font-size: 0.6875rem; padding: 7px 3px; }
 
   .account-detail { font-size: 0.6875rem; }
+
+  .shurei-sales-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .shurei-view-grid { grid-template-columns: 1fr 1fr; }
+
+  .score-selector { gap: 4px; }
+  .score-btn { width: 34px; height: 34px; font-size: 0.8125rem; border-radius: 8px; }
+
+  .issue-filters { flex-wrap: wrap; }
 }

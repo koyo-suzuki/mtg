@@ -63,6 +63,8 @@
         <div class="tabs">
           <div class="tab active" data-tab="chorei">朝礼</div>
           <div class="tab" data-tab="shurei">終礼</div>
+          <div class="tab" data-tab="managerEval">自己採点</div>
+          <div class="tab" data-tab="managerIssues">伝言板</div>
         </div>
 
         <!-- 朝礼タブ -->
@@ -87,11 +89,78 @@
           </div>
         </div>
 
-        <!-- 終礼タブ（今回はプレースホルダ） -->
+        <!-- 終礼タブ -->
         <div id="shureiTab" class="tab-content">
           <div class="card">
-            <div class="card-title">終礼</div>
-            <p class="text-muted">（キャスト識別フローの確認後に実装）</p>
+            <div class="card-title">本日の売上</div>
+            <div id="shureiAlert" class="alert hidden"></div>
+
+            <div class="shurei-sales-grid">
+              <div class="form-group">
+                <label>現金</label>
+                <input type="number" id="shureiCash" class="form-control shurei-input" min="0" value="0">
+              </div>
+              <div class="form-group">
+                <label>カード</label>
+                <input type="number" id="shureiCard" class="form-control shurei-input" min="0" value="0">
+              </div>
+              <div class="form-group">
+                <label>PayPay</label>
+                <input type="number" id="shureiPaypay" class="form-control shurei-input" min="0" value="0">
+              </div>
+              <div class="form-group">
+                <label>RoseLink</label>
+                <input type="number" id="shureiRoselink" class="form-control shurei-input" min="0" value="0">
+              </div>
+            </div>
+
+            <div class="shurei-total-row">
+              <span class="shurei-total-label">合計</span>
+              <span class="shurei-total-value" id="shureiTotal">¥0</span>
+            </div>
+
+            <hr class="divider">
+
+            <div class="form-group">
+              <label>今月の店舗売上（累計）</label>
+              <input type="number" id="shureiMonthlySales" class="form-control" min="0" value="0">
+            </div>
+
+            <button id="saveShureiBtn" class="btn btn-primary btn-block mt-20">保存</button>
+          </div>
+        </div>
+
+        <!-- 自己採点一覧タブ（店責用） -->
+        <div id="managerEvalTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">自己採点一覧</div>
+            <div id="managerEvalContent"></div>
+          </div>
+        </div>
+
+        <!-- 伝言板タブ（店責用） -->
+        <div id="managerIssuesTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">伝言板</div>
+            <div id="managerIssuesAlert" class="alert hidden"></div>
+
+            <!-- 新規投稿 -->
+            <div class="issue-form">
+              <div class="form-group">
+                <textarea id="managerIssueContent" class="form-control" rows="2" placeholder="伝言・連絡事項を入力..."></textarea>
+              </div>
+              <button id="postManagerIssue" class="btn btn-secondary btn-sm">投稿</button>
+            </div>
+
+            <!-- フィルタ -->
+            <div class="issue-filters">
+              <button class="issue-filter active" data-filter="all">すべて</button>
+              <button class="issue-filter" data-filter="未対応">未対応</button>
+              <button class="issue-filter" data-filter="対応中">対応中</button>
+              <button class="issue-filter" data-filter="完了">完了</button>
+            </div>
+
+            <div id="managerIssuesList"></div>
           </div>
         </div>
       </div>
@@ -116,6 +185,9 @@
         <div class="tabs">
           <div class="tab active" data-tab="castGoal">入力</div>
           <div class="tab" data-tab="castChoreiView">朝礼</div>
+          <div class="tab" data-tab="castShureiView">終礼</div>
+          <div class="tab" data-tab="castEval">振り返り</div>
+          <div class="tab" data-tab="castIssues">伝言板</div>
         </div>
 
         <!-- 目標入力タブ -->
@@ -138,7 +210,6 @@
 
             <button id="saveCastGoal" class="btn btn-primary btn-block">保存</button>
           </div>
-
         </div>
 
         <!-- 朝礼閲覧タブ -->
@@ -146,6 +217,62 @@
           <div class="card">
             <div class="card-title">今日の朝礼</div>
             <div id="castChoreiViewContent"></div>
+          </div>
+        </div>
+
+        <!-- 終礼閲覧タブ -->
+        <div id="castShureiViewTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">本日の売上</div>
+            <div id="castShureiViewContent"></div>
+          </div>
+        </div>
+
+        <!-- 振り返りタブ -->
+        <div id="castEvalTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">今日の振り返り</div>
+            <div id="castEvalAlert" class="alert hidden"></div>
+
+            <div class="form-group">
+              <label>自己採点（10段階）</label>
+              <div class="score-selector" id="scoreSelector">
+                <button class="score-btn" data-score="1">1</button>
+                <button class="score-btn" data-score="2">2</button>
+                <button class="score-btn" data-score="3">3</button>
+                <button class="score-btn" data-score="4">4</button>
+                <button class="score-btn" data-score="5">5</button>
+                <button class="score-btn" data-score="6">6</button>
+                <button class="score-btn" data-score="7">7</button>
+                <button class="score-btn" data-score="8">8</button>
+                <button class="score-btn" data-score="9">9</button>
+                <button class="score-btn" data-score="10">10</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>振り返りコメント</label>
+              <textarea id="evalComment" class="form-control" rows="3" placeholder="今日の反省や気づきを書いてね"></textarea>
+            </div>
+
+            <button id="saveEvalBtn" class="btn btn-primary btn-block">保存</button>
+          </div>
+        </div>
+
+        <!-- 伝言板タブ（キャスト用） -->
+        <div id="castIssuesTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">伝言板</div>
+            <div id="castIssuesAlert" class="alert hidden"></div>
+
+            <div class="issue-form">
+              <div class="form-group">
+                <textarea id="castIssueContent" class="form-control" rows="2" placeholder="伝言・連絡事項を入力..."></textarea>
+              </div>
+              <button id="postCastIssue" class="btn btn-secondary btn-sm">投稿</button>
+            </div>
+
+            <div id="castIssuesList"></div>
           </div>
         </div>
       </div>

@@ -11,7 +11,9 @@ const State = {
   storeName: null,
   businessDate: null,
   castMaster: [],
-  choreiCasts: []
+  choreiCasts: [],
+  selectedScore: null,
+  issueFilter: 'all'
 };
 
 // =====================================================
@@ -37,9 +39,30 @@ function setupEvents() {
     }
   });
 
+  // 終礼
+  document.getElementById('saveShureiBtn').addEventListener('click', onSaveShurei);
+  document.querySelectorAll('.shurei-input').forEach(input => {
+    input.addEventListener('input', updateShureiTotal);
+  });
+
+  // 店責伝言板
+  document.getElementById('postManagerIssue').addEventListener('click', () => onPostIssue('manager'));
+  document.querySelectorAll('.issue-filter').forEach(btn => {
+    btn.addEventListener('click', onIssueFilterClick);
+  });
+
   // キャスト画面
   document.getElementById('castBack').addEventListener('click', showLogin);
   document.getElementById('saveCastGoal').addEventListener('click', onSaveCastGoal);
+
+  // キャスト振り返り
+  document.getElementById('saveEvalBtn').addEventListener('click', onSaveEval);
+  document.querySelectorAll('.score-btn').forEach(btn => {
+    btn.addEventListener('click', onScoreSelect);
+  });
+
+  // キャスト伝言板
+  document.getElementById('postCastIssue').addEventListener('click', () => onPostIssue('cast'));
 
   // 専任画面
   document.getElementById('adminBack').addEventListener('click', showLogin);
@@ -554,7 +577,317 @@ function onTabChange(e) {
   const target = document.getElementById(tabName + 'Tab');
   if (target) target.classList.add('active');
 
+  // タブ切り替え時のデータ読み込み
   if (tabName === 'castChoreiView') loadCastData();
+  if (tabName === 'shurei') loadShureiData();
+  if (tabName === 'managerEval') loadManagerEvalData();
+  if (tabName === 'managerIssues') loadIssues('manager');
+  if (tabName === 'castShureiView') loadCastShureiView();
+  if (tabName === 'castEval') loadCastEvalData();
+  if (tabName === 'castIssues') loadIssues('cast');
+}
+
+// =====================================================
+// 終礼（店責）
+// =====================================================
+
+async function loadShureiData() {
+  const result = await api(`/api/shurei/${State.storeId}`);
+  if (!result.success) return;
+
+  if (result.data) {
+    document.getElementById('shureiCash').value = result.data.sales_cash || 0;
+    document.getElementById('shureiCard').value = result.data.sales_card || 0;
+    document.getElementById('shureiPaypay').value = result.data.sales_paypay || 0;
+    document.getElementById('shureiRoselink').value = result.data.sales_roselink || 0;
+    document.getElementById('shureiMonthlySales').value = result.data.monthly_sales || 0;
+  }
+  updateShureiTotal();
+}
+
+function updateShureiTotal() {
+  const cash = parseInt(document.getElementById('shureiCash').value) || 0;
+  const card = parseInt(document.getElementById('shureiCard').value) || 0;
+  const paypay = parseInt(document.getElementById('shureiPaypay').value) || 0;
+  const roselink = parseInt(document.getElementById('shureiRoselink').value) || 0;
+  const total = cash + card + paypay + roselink;
+  document.getElementById('shureiTotal').textContent = `¥${total.toLocaleString()}`;
+}
+
+async function onSaveShurei() {
+  const result = await api('/api/shurei', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeId: State.storeId,
+      salesCash: parseInt(document.getElementById('shureiCash').value) || 0,
+      salesCard: parseInt(document.getElementById('shureiCard').value) || 0,
+      salesPaypay: parseInt(document.getElementById('shureiPaypay').value) || 0,
+      salesRoselink: parseInt(document.getElementById('shureiRoselink').value) || 0,
+      monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0
+    })
+  });
+
+  showAlert('shureiAlert', result.success ? 'success' : 'error',
+    result.success ? '保存しました' : (result.error || '保存できませんでした'));
+}
+
+// =====================================================
+// 終礼閲覧（キャスト用）
+// =====================================================
+
+async function loadCastShureiView() {
+  const result = await api(`/api/shurei/${State.storeId}`);
+  const container = document.getElementById('castShureiViewContent');
+
+  if (!result.success || !result.data) {
+    container.innerHTML = '<p class="text-muted">まだデータがありません</p>';
+    return;
+  }
+
+  const d = result.data;
+  container.innerHTML = `
+    <div class="shurei-view-grid">
+      <div class="shurei-view-item">
+        <span class="shurei-view-label">現金</span>
+        <span class="shurei-view-value">¥${(d.sales_cash || 0).toLocaleString()}</span>
+      </div>
+      <div class="shurei-view-item">
+        <span class="shurei-view-label">カード</span>
+        <span class="shurei-view-value">¥${(d.sales_card || 0).toLocaleString()}</span>
+      </div>
+      <div class="shurei-view-item">
+        <span class="shurei-view-label">PayPay</span>
+        <span class="shurei-view-value">¥${(d.sales_paypay || 0).toLocaleString()}</span>
+      </div>
+      <div class="shurei-view-item">
+        <span class="shurei-view-label">RoseLink</span>
+        <span class="shurei-view-value">¥${(d.sales_roselink || 0).toLocaleString()}</span>
+      </div>
+    </div>
+    <div class="shurei-total-row">
+      <span class="shurei-total-label">合計</span>
+      <span class="shurei-total-value">¥${(d.sales_total || 0).toLocaleString()}</span>
+    </div>
+    <div class="shurei-monthly-row">
+      <span>今月の店舗売上</span>
+      <span class="shurei-monthly-value">¥${(d.monthly_sales || 0).toLocaleString()}</span>
+    </div>
+  `;
+}
+
+// =====================================================
+// 自己採点（キャスト用）
+// =====================================================
+
+function onScoreSelect(e) {
+  const score = parseInt(e.currentTarget.dataset.score);
+  State.selectedScore = score;
+  document.querySelectorAll('.score-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.score) === score);
+  });
+}
+
+async function loadCastEvalData() {
+  const result = await api(`/api/self-evaluation/${State.storeId}`);
+  if (!result.success) return;
+
+  const myEval = result.evaluations.find(e => e.gmail === State.gmail);
+  if (myEval) {
+    State.selectedScore = myEval.score;
+    document.getElementById('evalComment').value = myEval.comment || '';
+    document.querySelectorAll('.score-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.score) === myEval.score);
+    });
+  }
+}
+
+async function onSaveEval() {
+  if (!State.selectedScore) {
+    showAlert('castEvalAlert', 'error', '点数を選んでね');
+    return;
+  }
+
+  const result = await api('/api/self-evaluation', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeId: State.storeId,
+      gmail: State.gmail,
+      castName: State.displayName,
+      score: State.selectedScore,
+      comment: document.getElementById('evalComment').value.trim(),
+      isEarlyLeave: false
+    })
+  });
+
+  showAlert('castEvalAlert', result.success ? 'success' : 'error',
+    result.success ? '保存しました' : (result.error || '保存できませんでした'));
+}
+
+// =====================================================
+// 自己採点一覧（店責用）
+// =====================================================
+
+async function loadManagerEvalData() {
+  // 朝礼に登録されているキャスト一覧を取得
+  const choreiResult = await api(`/api/chorei/${State.storeId}`);
+  const evalResult = await api(`/api/self-evaluation/${State.storeId}`);
+  const container = document.getElementById('managerEvalContent');
+
+  if (!evalResult.success) {
+    container.innerHTML = '<p class="text-muted">読み込みに失敗しました</p>';
+    return;
+  }
+
+  const choreiCasts = choreiResult.success ? choreiResult.casts : [];
+  const evals = evalResult.evaluations;
+
+  if (choreiCasts.length === 0) {
+    container.innerHTML = '<p class="text-muted">出勤キャストがまだ登録されていません</p>';
+    return;
+  }
+
+  let html = '<div class="eval-list">';
+  choreiCasts.forEach(cast => {
+    const ev = evals.find(e => e.gmail === cast.gmail);
+    const statusClass = ev ? 'eval-done' : 'eval-pending';
+    const statusLabel = ev ? `${ev.score}点` : '未記入';
+
+    html += `<div class="eval-item ${statusClass}">
+      <div class="eval-item-header">
+        <span class="eval-item-name">${escapeHtml(cast.castName)}</span>
+        <span class="eval-item-score ${statusClass}">${statusLabel}</span>
+      </div>`;
+
+    if (ev) {
+      html += `<div class="eval-item-comment">${ev.comment ? escapeHtml(ev.comment) : '<span class="text-muted">コメントなし</span>'}</div>`;
+    }
+
+    html += '</div>';
+  });
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// =====================================================
+// 伝言板（共通）
+// =====================================================
+
+async function loadIssues(context) {
+  const result = await api(`/api/issues/${State.storeId}`);
+  const listId = context === 'manager' ? 'managerIssuesList' : 'castIssuesList';
+  const container = document.getElementById(listId);
+
+  if (!result.success) {
+    container.innerHTML = '<p class="text-muted">読み込みに失敗しました</p>';
+    return;
+  }
+
+  let issues = result.issues;
+
+  // フィルタ適用（店責画面のみ）
+  if (context === 'manager' && State.issueFilter !== 'all') {
+    issues = issues.filter(i => i.status === State.issueFilter);
+  }
+
+  if (issues.length === 0) {
+    container.innerHTML = '<p class="text-muted" style="padding:12px 0">投稿がありません</p>';
+    return;
+  }
+
+  let html = '';
+  issues.forEach(issue => {
+    const statusClass = issue.status === '完了' ? 'status-done'
+      : issue.status === '対応中' ? 'status-progress' : 'status-pending';
+
+    html += `<div class="issue-item">
+      <div class="issue-item-header">
+        <span class="issue-item-reporter">${escapeHtml(issue.reporter)}</span>
+        <span class="issue-item-date">${issue.date}</span>
+      </div>
+      <div class="issue-item-content">${escapeHtml(issue.content)}</div>
+      <div class="issue-item-footer">
+        <span class="issue-status ${statusClass}">${escapeHtml(issue.status)}</span>`;
+
+    // 店責・専任はステータス変更可能
+    if (context === 'manager') {
+      html += `<select class="issue-status-select" data-issue-id="${issue.id}" onchange="onIssueStatusChange(this)">
+        <option value="未対応" ${issue.status === '未対応' ? 'selected' : ''}>未対応</option>
+        <option value="対応中" ${issue.status === '対応中' ? 'selected' : ''}>対応中</option>
+        <option value="完了" ${issue.status === '完了' ? 'selected' : ''}>完了</option>
+      </select>`;
+    }
+
+    html += '</div>';
+
+    if (issue.feedback) {
+      html += `<div class="issue-feedback"><strong>対応:</strong> ${escapeHtml(issue.feedback)}</div>`;
+    }
+
+    // 店責用のフィードバック入力
+    if (context === 'manager') {
+      html += `<div class="issue-feedback-input">
+        <input type="text" class="form-control" placeholder="対応コメント..." value="${escapeHtml(issue.feedback || '')}" data-issue-id="${issue.id}" data-field="feedback">
+      </div>`;
+    }
+
+    html += '</div>';
+  });
+
+  container.innerHTML = html;
+}
+
+function onIssueFilterClick(e) {
+  const filter = e.currentTarget.dataset.filter;
+  State.issueFilter = filter;
+  document.querySelectorAll('.issue-filter').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.filter === filter);
+  });
+  loadIssues('manager');
+}
+
+async function onPostIssue(context) {
+  const inputId = context === 'manager' ? 'managerIssueContent' : 'castIssueContent';
+  const alertId = context === 'manager' ? 'managerIssuesAlert' : 'castIssuesAlert';
+  const content = document.getElementById(inputId).value.trim();
+
+  if (!content) {
+    showAlert(alertId, 'error', '内容を入力してください');
+    return;
+  }
+
+  const result = await api('/api/issues', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeId: State.storeId,
+      reporter: State.displayName,
+      content
+    })
+  });
+
+  if (result.success) {
+    document.getElementById(inputId).value = '';
+    showAlert(alertId, 'success', '投稿しました');
+    await loadIssues(context);
+  } else {
+    showAlert(alertId, 'error', result.error || '投稿できませんでした');
+  }
+}
+
+async function onIssueStatusChange(selectEl) {
+  const issueId = selectEl.dataset.issueId;
+  const status = selectEl.value;
+
+  // 同じissueのfeedback inputを取得
+  const feedbackInput = document.querySelector(`input[data-issue-id="${issueId}"][data-field="feedback"]`);
+  const feedback = feedbackInput ? feedbackInput.value : '';
+
+  await api(`/api/issues/${issueId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status, feedback })
+  });
+
+  await loadIssues('manager');
 }
 
 // =====================================================

@@ -1,0 +1,8 @@
+{
+  "name": "chorei-shurei-root",
+  "private": true,
+  "scripts": {
+    "postinstall": "cd local-app-v2 && npm install",
+    "start": "cd local-app-v2 && npm start"
+  }
+}
