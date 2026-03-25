@@ -134,4 +134,13 @@ if (!tableExists) {
   console.log('データベース初期化完了');
 }
 
+// マイグレーション: 送迎カラム追加
+try {
+  db.prepare("SELECT needs_pickup FROM chorei LIMIT 1").get();
+} catch (e) {
+  db.exec("ALTER TABLE chorei ADD COLUMN needs_pickup INTEGER DEFAULT 0");
+  db.exec("ALTER TABLE chorei ADD COLUMN pickup_destination TEXT DEFAULT ''");
+  console.log('送迎カラムを追加しました');
+}
+
 module.exports = db;

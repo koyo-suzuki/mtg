@@ -53,6 +53,20 @@ function setupEvents() {
   document.getElementById('castBack').addEventListener('click', showLogin);
   document.getElementById('saveCastGoal').addEventListener('click', onSaveCastGoal);
 
+  // キャスト送迎トグル
+  document.getElementById('castPickupCheck').addEventListener('change', (e) => {
+    document.getElementById('castPickupDestGroup').classList.toggle('hidden', !e.target.checked);
+  });
+
+  // 郵便番号検索
+  document.getElementById('castPickupZipBtn').addEventListener('click', onZipSearch);
+  document.getElementById('castPickupZip').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); onZipSearch(); }
+  });
+
+  // 送迎コピー
+  document.getElementById('copyPickupBtn').addEventListener('click', onCopyPickup);
+
   // キャスト振り返り
   document.getElementById('saveEvalBtn').addEventListener('click', onSaveEval);
   document.querySelectorAll('.score-btn').forEach(btn => {
@@ -264,6 +278,8 @@ function autoAddSelf() {
     expectedVisitors: 0,
     castGoal: '',
     managerMemo: '',
+    needsPickup: false,
+    pickupDestination: '',
     isSelf: true
   });
 
@@ -324,7 +340,9 @@ function addCastToChorei(masterCast) {
     monthlyDrinks: 0,
     expectedVisitors: 0,
     castGoal: '',
-    managerMemo: ''
+    managerMemo: '',
+    needsPickup: false,
+    pickupDestination: ''
   });
 
   renderChoreiCastList();
@@ -351,11 +369,50 @@ function renderChoreiCastList() {
 
   State.choreiCasts.forEach((cast, i) => {
     const isSelf = cast.gmail === State.gmail;
-    const goalHtml = cast.castGoal
-      ? `<div class="cast-goal-display goal-scroll">${escapeHtml(cast.castGoal)}</div>`
-      : `<div class="cast-goal-display empty">まだ書いてない</div>`;
-
     const selfBadge = isSelf ? '<span class="badge badge-self">自分</span>' : '';
+
+    // 自分の行は目標・送迎を入力可能に
+    let goalSection = '';
+    let pickupSection = '';
+
+    if (isSelf) {
+      goalSection = `
+        <div class="form-group">
+          <label>自分の目標</label>
+          <textarea class="form-control manager-self-goal" data-index="${i}" rows="2" placeholder="今日の目標を書いてね">${escapeHtml(cast.castGoal || '')}</textarea>
+        </div>`;
+      const checked = cast.needsPickup ? 'checked' : '';
+      const destHidden = cast.needsPickup ? '' : 'hidden';
+      pickupSection = `
+        <div class="form-group">
+          <label>送迎</label>
+          <label class="switch-label">
+            <div class="switch">
+              <input type="checkbox" class="manager-self-pickup-check" data-index="${i}" ${checked}>
+              <span class="switch-slider"></span>
+            </div>
+            <span>送迎を使う</span>
+          </label>
+          <div class="manager-self-pickup-dest ${destHidden}" style="margin-top:8px;">
+            <div class="pickup-zip-row">
+              <input type="text" class="form-control manager-self-zip" placeholder="郵便番号（7桁）" maxlength="8" style="width:140px; flex:none;">
+              <button type="button" class="btn btn-secondary btn-sm manager-self-zip-btn">検索</button>
+            </div>
+            <div class="form-group" style="margin-top:6px;">
+              <input type="text" class="form-control manager-self-pickup-input" data-index="${i}" placeholder="住所を入力 or 郵便番号で検索" value="${escapeHtml(cast.pickupDestination || '')}">
+            </div>
+          </div>
+        </div>`;
+    } else {
+      const goalHtml = cast.castGoal
+        ? `<div class="cast-goal-display goal-scroll">${escapeHtml(cast.castGoal)}</div>`
+        : `<div class="cast-goal-display empty">まだ書いてない</div>`;
+      goalSection = `
+        <div class="form-group">
+          <label>キャスト目標</label>
+          ${goalHtml}
+        </div>`;
+    }
 
     const row = document.createElement('div');
     row.className = 'cast-row' + (isSelf ? ' cast-row-self' : '');
@@ -387,10 +444,8 @@ function renderChoreiCastList() {
           </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>キャスト目標</label>
-        ${goalHtml}
-      </div>
+      ${goalSection}
+      ${pickupSection}
     `;
     container.appendChild(row);
   });
@@ -402,39 +457,78 @@ function renderChoreiCastList() {
       renderChoreiCastList();
     });
   });
+
+  // 店責自身の送迎トグル
+  container.querySelectorAll('.manager-self-pickup-check').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      State.choreiCasts[idx].needsPickup = e.target.checked;
+      const destDiv = e.target.closest('.form-group').querySelector('.manager-self-pickup-dest');
+      if (destDiv) destDiv.classList.toggle('hidden', !e.target.checked);
+    });
+  });
+
+  // 店責自身の郵便番号検索
+  container.querySelectorAll('.manager-self-zip-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.manager-self-pickup-dest');
+      const zipInput = row.querySelector('.manager-self-zip');
+      const destInput = row.querySelector('.manager-self-pickup-input');
+      const raw = zipInput.value.replace(/[^0-9]/g, '');
+      if (raw.length !== 7) {
+        showAlert('choreiAlert', 'error', '郵便番号は7桁で入力してください');
+        return;
+      }
+      try {
+        const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${raw}`);
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          const r = data.results[0];
+          destInput.value = r.address1 + r.address2 + r.address3;
+        } else {
+          showAlert('choreiAlert', 'error', '該当する住所が見つかりません');
+        }
+      } catch (e) {
+        showAlert('choreiAlert', 'error', '検索に失敗しました');
+      }
+    });
+  });
 }
 
 async function onSaveChorei() {
   const salesInputs = document.querySelectorAll('.chorei-monthly-sales');
   const drinksInputs = document.querySelectorAll('.chorei-monthly-drinks');
+  const selfGoalInput = document.querySelector('.manager-self-goal');
+  const selfPickupCheck = document.querySelector('.manager-self-pickup-check');
+  const selfPickupInput = document.querySelector('.manager-self-pickup-input');
 
-  const casts = State.choreiCasts.map((cast, i) => ({
-    castName: cast.castName,
-    gmail: cast.gmail,
-    monthlySales: parseInt(salesInputs[i]?.value) || 0,
-    monthlyDrinks: parseInt(drinksInputs[i]?.value) || 0,
-    expectedVisitors: cast.expectedVisitors || 0,
-    managerMemo: ''
-  }));
+  const casts = State.choreiCasts.map((cast, i) => {
+    const isSelf = cast.gmail === State.gmail;
+    return {
+      castName: cast.castName,
+      gmail: cast.gmail,
+      monthlySales: parseInt(salesInputs[i]?.value) || 0,
+      monthlyDrinks: parseInt(drinksInputs[i]?.value) || 0,
+      expectedVisitors: cast.expectedVisitors || 0,
+      managerMemo: '',
+      castGoal: isSelf && selfGoalInput ? selfGoalInput.value.trim() : (cast.castGoal || ''),
+      needsPickup: isSelf && selfPickupCheck ? selfPickupCheck.checked : (cast.needsPickup || false),
+      pickupDestination: isSelf && selfPickupInput ? selfPickupInput.value.trim() : (cast.pickupDestination || '')
+    };
+  });
 
   const result = await api('/api/chorei', {
     method: 'POST',
     body: JSON.stringify({ storeId: State.storeId, casts })
   });
 
-  const alertEl = document.getElementById('choreiAlert');
   if (result.success) {
-    alertEl.className = 'alert alert-success';
-    alertEl.textContent = '保存しました';
     await loadChoreiData();
-    // 自動追加の再チェック
     if (State.role === 'cast_manager') autoAddSelf();
+    showAlert('choreiAlert', 'success', '保存しました');
   } else {
-    alertEl.className = 'alert alert-error';
-    alertEl.textContent = result.error || '保存できませんでした';
+    showAlert('choreiAlert', 'error', result.error || '保存できませんでした');
   }
-  alertEl.classList.remove('hidden');
-  setTimeout(() => alertEl.classList.add('hidden'), 3000);
 }
 
 // =====================================================
@@ -459,6 +553,9 @@ async function loadCastData() {
   if (myData) {
     document.getElementById('castGoalInput').value = myData.castGoal || '';
     document.getElementById('castVisitorsInput').value = myData.expectedVisitors || 0;
+    document.getElementById('castPickupCheck').checked = myData.needsPickup;
+    document.getElementById('castPickupDest').value = myData.pickupDestination || '';
+    document.getElementById('castPickupDestGroup').classList.toggle('hidden', !myData.needsPickup);
   }
 
   const castGoalAlert = document.getElementById('castGoalAlert');
@@ -506,16 +603,44 @@ function renderCastChoreiView(casts) {
 async function onSaveCastGoal() {
   const goal = document.getElementById('castGoalInput').value.trim();
   const expectedVisitors = parseInt(document.getElementById('castVisitorsInput').value) || 0;
+  const needsPickup = document.getElementById('castPickupCheck').checked;
+  const pickupDestination = document.getElementById('castPickupDest').value.trim();
   const result = await api('/api/cast-goal', {
     method: 'POST',
-    body: JSON.stringify({ storeId: State.storeId, gmail: State.gmail, goal, expectedVisitors })
+    body: JSON.stringify({ storeId: State.storeId, gmail: State.gmail, goal, expectedVisitors, needsPickup, pickupDestination })
   });
-
-  showAlert('castGoalAlert', result.success ? 'success' : 'error',
-    result.success ? '保存しました' : (result.error || '保存できませんでした'));
 
   if (result.success) {
     await loadCastData();
+    showAlert('castGoalAlert', 'success', '保存しました');
+  } else {
+    showAlert('castGoalAlert', 'error', result.error || '保存できませんでした');
+  }
+}
+
+// =====================================================
+// 郵便番号検索
+// =====================================================
+
+async function onZipSearch() {
+  const raw = document.getElementById('castPickupZip').value.replace(/[^0-9]/g, '');
+  if (raw.length !== 7) {
+    showAlert('castGoalAlert', 'error', '郵便番号は7桁で入力してね');
+    return;
+  }
+
+  try {
+    const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${raw}`);
+    const data = await res.json();
+    if (data.results && data.results.length > 0) {
+      const r = data.results[0];
+      const address = r.address1 + r.address2 + r.address3;
+      document.getElementById('castPickupDest').value = address;
+    } else {
+      showAlert('castGoalAlert', 'error', '該当する住所が見つかりません');
+    }
+  } catch (e) {
+    showAlert('castGoalAlert', 'error', '検索に失敗しました');
   }
 }
 
@@ -576,6 +701,7 @@ function onTabChange(e) {
   // タブ切り替え時のデータ読み込み
   if (tabName === 'castChoreiView') loadCastData();
   if (tabName === 'shurei') { loadShureiData(); loadManagerEvalData(); loadManagerOwnEval(); }
+  if (tabName === 'managerPickup') loadPickupList();
   if (tabName === 'managerIssues') loadIssues('manager');
   if (tabName === 'castShureiView') loadCastShureiView();
   if (tabName === 'castEval') loadCastEvalData();
@@ -787,6 +913,104 @@ async function onSaveManagerEval() {
 }
 
 // =====================================================
+// 送迎一覧（店責用）
+// =====================================================
+
+async function loadPickupList() {
+  const result = await api('/api/pickup-list');
+  const container = document.getElementById('pickupContent');
+
+  if (!result.success) {
+    container.innerHTML = '<p class="text-muted">読み込みに失敗しました</p>';
+    return;
+  }
+
+  const pickups = result.pickups;
+
+  if (pickups.length === 0) {
+    container.innerHTML = '<p class="text-muted">送迎の登録はありません</p>';
+    document.getElementById('copyPickupBtn').classList.add('hidden');
+    return;
+  }
+
+  document.getElementById('copyPickupBtn').classList.remove('hidden');
+
+  // 店舗ごとにグルーピング
+  const byStore = {};
+  pickups.forEach(p => {
+    if (!byStore[p.store_name]) byStore[p.store_name] = [];
+    byStore[p.store_name].push(p);
+  });
+
+  // 日付フォーマット (M/D)
+  const dateParts = result.date.split('-');
+  const dateStr = `${parseInt(dateParts[1])}/${parseInt(dateParts[2])}`;
+
+  let html = '';
+  for (const [storeName, members] of Object.entries(byStore)) {
+    html += `<div class="pickup-store-block" data-store="${escapeHtml(storeName)}" data-date="${dateStr}">`;
+    html += `<div class="pickup-store-header">${escapeHtml(storeName)} ${dateStr} 送迎一覧</div>`;
+    members.forEach(m => {
+      html += `<div class="pickup-member">`;
+      html += `<div class="pickup-member-name">・${escapeHtml(m.cast_name)}</div>`;
+      html += `<div class="pickup-member-dest">・${escapeHtml(m.pickup_destination || '未入力')}</div>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function onCopyPickup() {
+  const container = document.getElementById('pickupContent');
+  const blocks = container.querySelectorAll('.pickup-store-block');
+  let text = '';
+
+  blocks.forEach(block => {
+    const storeName = block.dataset.store;
+    const dateStr = block.dataset.date;
+    text += `${storeName} ${dateStr} 送迎一覧\n`;
+    const members = block.querySelectorAll('.pickup-member');
+    members.forEach((m, i) => {
+      const name = m.querySelector('.pickup-member-name').textContent;
+      const dest = m.querySelector('.pickup-member-dest').textContent;
+      text += `${name}\n${dest}\n`;
+      if (i < members.length - 1) text += '\n';
+    });
+    text += '\n';
+  });
+
+  const copyText = text.trim();
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(copyText).then(() => {
+      showAlert('pickupCopyAlert', 'success', 'コピーしました');
+    }).catch(() => {
+      fallbackCopy(copyText);
+    });
+  } else {
+    fallbackCopy(copyText);
+  }
+}
+
+function fallbackCopy(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    showAlert('pickupCopyAlert', 'success', 'コピーしました');
+  } catch (e) {
+    showAlert('pickupCopyAlert', 'error', 'コピーに失敗しました');
+  }
+  document.body.removeChild(textarea);
+}
+
+// =====================================================
 // 伝言板（共通）
 // =====================================================
 
@@ -913,10 +1137,39 @@ async function onIssueStatusChange(selectEl) {
 
 function showAlert(id, type, message) {
   const el = document.getElementById(id);
-  el.className = `alert alert-${type}`;
-  el.textContent = message;
-  el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 3000);
+  if (el) {
+    el.className = `alert alert-${type}`;
+    el.textContent = message;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 3000);
+  }
+  // 店責画面では常にトーストも表示
+  if (document.getElementById('managerScreen') && !document.getElementById('managerScreen').classList.contains('hidden')) {
+    showToast(type, message);
+  }
+}
+
+function showToast(type, message) {
+  const existing = document.querySelector('.toast-notification');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = `toast-notification toast-${type}`;
+  toast.textContent = message;
+  toast.style.opacity = '0';
+  toast.style.transform = 'translateX(-50%) translateY(-20px)';
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+  }, 10);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(-20px)';
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
 }
 
 function escapeHtml(str) {

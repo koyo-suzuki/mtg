@@ -63,6 +63,7 @@
         <div class="tabs">
           <div class="tab active" data-tab="chorei">朝礼</div>
           <div class="tab" data-tab="shurei">終礼</div>
+          <div class="tab" data-tab="managerPickup">送迎</div>
           <div class="tab" data-tab="managerIssues">伝言板</div>
         </div>
 
@@ -140,6 +141,16 @@
           </div>
         </div>
 
+        <!-- 送迎タブ（店責用） -->
+        <div id="managerPickupTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">送迎一覧</div>
+            <div id="pickupContent"></div>
+            <button id="copyPickupBtn" class="btn btn-secondary btn-block mt-20">コピーする</button>
+            <div id="pickupCopyAlert" class="alert hidden"></div>
+          </div>
+        </div>
+
         <!-- 伝言板タブ（店責用） -->
         <div id="managerIssuesTab" class="tab-content">
           <div class="card">
@@ -207,6 +218,26 @@
               <div class="row" style="align-items:center; gap:8px;">
                 <input type="number" id="castVisitorsInput" class="form-control" style="width:80px; flex:none;" min="0" value="0">
                 <span>組</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:#fff">送迎</label>
+              <label class="switch-label">
+                <div class="switch">
+                  <input type="checkbox" id="castPickupCheck">
+                  <span class="switch-slider"></span>
+                </div>
+                <span>送迎を使う</span>
+              </label>
+              <div id="castPickupDestGroup" class="hidden" style="margin-top:8px;">
+                <div class="pickup-zip-row">
+                  <input type="text" id="castPickupZip" class="form-control" placeholder="郵便番号（7桁）" maxlength="8" style="width:140px; flex:none;">
+                  <button type="button" id="castPickupZipBtn" class="btn btn-secondary btn-sm">検索</button>
+                </div>
+                <div class="form-group" style="margin-top:6px;">
+                  <input type="text" id="castPickupDest" class="form-control" placeholder="住所を入力 or 郵便番号で検索">
+                </div>
               </div>
             </div>
 

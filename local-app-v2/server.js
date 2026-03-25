@@ -138,12 +138,12 @@ app.post('/api/chorei', (req, res) => {
     const check = db.prepare('SELECT id FROM chorei WHERE date = ? AND store_id = ? AND gmail = ?');
     const update = db.prepare(`
       UPDATE chorei SET cast_name = ?, monthly_sales = ?, monthly_drinks = ?,
-        expected_visitors = ?, manager_memo = ?
+        expected_visitors = ?, manager_memo = ?, needs_pickup = ?, pickup_destination = ?, cast_goal = COALESCE(?, cast_goal)
       WHERE id = ?
     `);
     const insert = db.prepare(`
-      INSERT INTO chorei (date, store_id, cast_name, gmail, monthly_sales, monthly_drinks, expected_visitors, manager_memo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO chorei (date, store_id, cast_name, gmail, monthly_sales, monthly_drinks, expected_visitors, manager_memo, needs_pickup, pickup_destination, cast_goal)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const existingGmails = db.prepare(
@@ -170,6 +170,9 @@ app.post('/api/chorei', (req, res) => {
           cast.monthlyDrinks || 0,
           cast.expectedVisitors || 0,
           cast.managerMemo || '',
+          cast.needsPickup ? 1 : 0,
+          cast.pickupDestination || '',
+          cast.castGoal || null,
           existing.id
         );
       } else {
@@ -178,7 +181,10 @@ app.post('/api/chorei', (req, res) => {
           cast.monthlySales || 0,
           cast.monthlyDrinks || 0,
           cast.expectedVisitors || 0,
-          cast.managerMemo || ''
+          cast.managerMemo || '',
+          cast.needsPickup ? 1 : 0,
+          cast.pickupDestination || '',
+          cast.castGoal || ''
         );
       }
     }
@@ -200,7 +206,7 @@ app.get('/api/chorei/:storeId', (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT cast_name, gmail, monthly_sales, monthly_drinks, expected_visitors,
-             cast_goal, manager_memo
+             cast_goal, manager_memo, needs_pickup, pickup_destination
       FROM chorei
       WHERE date = ? AND store_id = ?
     `).all(date, parseInt(storeId));
@@ -212,7 +218,9 @@ app.get('/api/chorei/:storeId', (req, res) => {
       monthlyDrinks: row.monthly_drinks,
       expectedVisitors: row.expected_visitors,
       castGoal: row.cast_goal,
-      managerMemo: row.manager_memo
+      managerMemo: row.manager_memo,
+      needsPickup: row.needs_pickup === 1,
+      pickupDestination: row.pickup_destination || ''
     }));
 
     res.json({ success: true, casts, date });
@@ -225,7 +233,7 @@ app.get('/api/chorei/:storeId', (req, res) => {
  * キャスト目標保存
  */
 app.post('/api/cast-goal', (req, res) => {
-  const { storeId, gmail, goal, expectedVisitors } = req.body;
+  const { storeId, gmail, goal, expectedVisitors, needsPickup, pickupDestination } = req.body;
   const date = getBusinessDate();
 
   try {
@@ -234,8 +242,8 @@ app.post('/api/cast-goal', (req, res) => {
     ).get(date, storeId, gmail);
 
     if (existing) {
-      db.prepare('UPDATE chorei SET cast_goal = ?, expected_visitors = ? WHERE id = ?')
-        .run(goal, expectedVisitors || 0, existing.id);
+      db.prepare('UPDATE chorei SET cast_goal = ?, expected_visitors = ?, needs_pickup = ?, pickup_destination = ? WHERE id = ?')
+        .run(goal, expectedVisitors || 0, needsPickup ? 1 : 0, pickupDestination || '', existing.id);
       res.json({ success: true });
     } else {
       res.json({ success: false, error: '朝礼にまだ追加されていません' });
@@ -261,6 +269,27 @@ app.get('/api/my-stores/:gmail', (req, res) => {
     `).all(date, gmail);
 
     res.json({ success: true, stores: rows });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 送迎一覧取得（全店舗・当日）
+ */
+app.get('/api/pickup-list', (req, res) => {
+  const date = getBusinessDate();
+
+  try {
+    const rows = db.prepare(`
+      SELECT c.cast_name, c.pickup_destination, s.name as store_name
+      FROM chorei c
+      JOIN stores s ON c.store_id = s.id
+      WHERE c.date = ? AND c.needs_pickup = 1
+      ORDER BY s.name, c.cast_name
+    `).all(date);
+
+    res.json({ success: true, pickups: rows, date });
   } catch (error) {
     res.json({ success: false, error: error.message });
   }

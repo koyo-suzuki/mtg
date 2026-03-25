@@ -633,6 +633,29 @@ select.form-control { appearance: auto; }
 .badge-early-leave { background: var(--danger-bg); color: var(--danger); margin-top: 6px; display: inline-block; }
 
 /* =====================================================
+   送迎
+   ===================================================== */
+.pickup-toggle-row { display: flex; align-items: center; gap: 8px; }
+label.switch-label { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.9rem; }
+.switch { position: relative; width: 48px; height: 26px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch-slider {
+  position: absolute; inset: 0; background: #ccc; border-radius: 26px; transition: 0.3s;
+}
+.switch-slider::before {
+  content: ''; position: absolute; width: 20px; height: 20px; left: 3px; bottom: 3px;
+  background: #fff; border-radius: 50%; transition: 0.3s;
+}
+.switch input:checked + .switch-slider { background: var(--primary); }
+.switch input:checked + .switch-slider::before { transform: translateX(22px); }
+.pickup-zip-row { display: flex; align-items: center; gap: 8px; }
+.pickup-store-block { margin-bottom: 16px; padding: 12px; background: var(--bg); border-radius: 8px; }
+.pickup-store-header { font-weight: 700; font-size: 1rem; margin-bottom: 8px; color: var(--primary); }
+.pickup-member { margin-bottom: 6px; }
+.pickup-member-name { font-weight: 600; font-size: 0.9rem; }
+.pickup-member-dest { font-size: 0.85rem; color: var(--text-secondary); }
+
+/* =====================================================
    伝言板
    ===================================================== */
 .issue-form { margin-bottom: 20px; }
@@ -738,3 +761,28 @@ select.form-control { appearance: auto; }
 
   .issue-filters { flex-wrap: wrap; }
 }
+
+/* =====================================================
+   トースト通知
+   ===================================================== */
+.toast-notification {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  opacity: 0;
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  z-index: 9999;
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.toast-notification.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.toast-success { background: #00A382; color: #fff; }
+.toast-error { background: #E53935; color: #fff; }
