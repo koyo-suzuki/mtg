@@ -1,0 +1,22 @@
+{
+  "name": "chorei-shurei-v2",
+  "version": "2.0.0",
+  "description": "朝礼・終礼シートシステム v2",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "init-db": "node scripts/init-db.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}

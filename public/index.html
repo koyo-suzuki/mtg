@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>朝礼・終礼シート v2</title>
+  <link rel="stylesheet" href="/styles/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ========== サイト認証画面 ========== -->
+    <div id="siteAuthScreen" class="screen">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>朝礼・終礼シート</h1>
+          <div class="subtitle">MTG管理システム</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">ログイン</div>
+          <div id="siteAuthAlert" class="alert hidden"></div>
+
+          <div class="form-group">
+            <label>ID</label>
+            <input type="text" id="siteAuthUser" class="form-control" placeholder="IDを入力" autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label>パスワード</label>
+            <input type="password" id="siteAuthPass" class="form-control" placeholder="パスワードを入力" autocomplete="current-password">
+          </div>
+
+          <button id="siteAuthBtn" class="btn btn-primary btn-block">ログイン</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== ログイン画面 ========== -->
+    <div id="loginScreen" class="screen hidden">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>朝礼・終礼シート</h1>
+          <div class="subtitle">MTG管理システム</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Googleアカウントでログイン</div>
+          <p class="text-sm text-muted">（ローカル版: アカウントを選択してください）</p>
+
+          <div id="accountList" class="account-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== キャスト: 店舗選択画面 ========== -->
+    <div id="castStoreScreen" class="screen hidden">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>お店を選んでね</h1>
+          <div class="subtitle" id="castStoreGreeting"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">今日はどこで働く？</div>
+
+          <div id="castStoreList" class="store-list"></div>
+
+          <button id="castStoreBack" class="btn btn-text btn-block mt-20">戻る</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 店責画面 ========== -->
+    <div id="managerScreen" class="screen hidden">
+      <div class="container">
+        <div class="header">
+          <div class="row">
+            <div class="col">
+              <h1 id="managerStoreName"></h1>
+              <span class="text-sm text-muted">営業日: <span id="managerDate"></span></span>
+            </div>
+            <div class="col text-right">
+              <button id="managerBack" class="btn btn-outline btn-sm">戻る</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- タブ -->
+        <div class="tabs">
+          <div class="tab active" data-tab="chorei">朝礼</div>
+          <div class="tab" data-tab="shurei">終礼</div>
+          <div class="tab" data-tab="managerPickup">送迎</div>
+          <div class="tab" data-tab="managerIssues">伝言板</div>
+        </div>
+
+        <!-- 朝礼タブ -->
+        <div id="choreiTab" class="tab-content active">
+          <div class="card">
+            <div class="card-title">出勤キャスト</div>
+            <div id="choreiAlert" class="alert hidden"></div>
+
+            <!-- キャスト追加エリア -->
+            <div class="add-cast-area">
+              <div class="card-title text-sm">キャストを追加</div>
+              <div class="cast-search-wrapper">
+                <input type="text" id="castSearchInput" class="form-control" placeholder="名前で検索..." autocomplete="off">
+                <div id="castSearchResults" class="cast-search-results hidden"></div>
+              </div>
+            </div>
+
+            <!-- キャスト一覧 -->
+            <div id="choreiCastList"></div>
+
+            <button id="saveChoreiBtn" class="btn btn-primary btn-block mt-20">保存</button>
+          </div>
+        </div>
+
+        <!-- 終礼タブ -->
+        <div id="shureiTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">本日の売上</div>
+            <div id="shureiAlert" class="alert hidden"></div>
+
+            <div class="form-group">
+              <label>本日の売上</label>
+              <input type="number" id="shureiSalesTotal" class="form-control" min="0" value="0">
+            </div>
+
+            <div class="form-group">
+              <label>今月の店舗売上（累計）</label>
+              <input type="number" id="shureiMonthlySales" class="form-control" min="0" value="0">
+            </div>
+
+            <button id="saveShureiBtn" class="btn btn-primary btn-block mt-20">保存</button>
+          </div>
+
+          <!-- 店責自身の振り返り -->
+          <div class="card mt-20">
+            <div class="card-title">自分の振り返り</div>
+            <div id="managerEvalAlert" class="alert hidden"></div>
+            <div class="form-group">
+              <label>自己採点（10段階）</label>
+              <div class="score-selector" id="managerScoreSelector">
+                <button class="score-btn manager-score-btn" data-score="1">1</button>
+                <button class="score-btn manager-score-btn" data-score="2">2</button>
+                <button class="score-btn manager-score-btn" data-score="3">3</button>
+                <button class="score-btn manager-score-btn" data-score="4">4</button>
+                <button class="score-btn manager-score-btn" data-score="5">5</button>
+                <button class="score-btn manager-score-btn" data-score="6">6</button>
+                <button class="score-btn manager-score-btn" data-score="7">7</button>
+                <button class="score-btn manager-score-btn" data-score="8">8</button>
+                <button class="score-btn manager-score-btn" data-score="9">9</button>
+                <button class="score-btn manager-score-btn" data-score="10">10</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>振り返りコメント</label>
+              <textarea id="managerEvalComment" class="form-control" rows="3" placeholder="今日の反省や気づき"></textarea>
+            </div>
+            <button id="saveManagerEvalBtn" class="btn btn-primary btn-block">保存</button>
+          </div>
+
+          <!-- 自己採点一覧 -->
+          <div class="card mt-20">
+            <div class="card-title">自己採点一覧</div>
+            <div id="managerEvalContent"></div>
+          </div>
+        </div>
+
+        <!-- 送迎タブ（店責用） -->
+        <div id="managerPickupTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">送迎一覧</div>
+            <div id="pickupContent"></div>
+            <button id="copyPickupBtn" class="btn btn-secondary btn-block mt-20">コピーする</button>
+            <div id="pickupCopyAlert" class="alert hidden"></div>
+          </div>
+        </div>
+
+        <!-- 伝言板タブ（店責用） -->
+        <div id="managerIssuesTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">伝言板</div>
+            <div id="managerIssuesAlert" class="alert hidden"></div>
+
+            <!-- 新規投稿 -->
+            <div class="issue-form">
+              <div class="form-group">
+                <textarea id="managerIssueContent" class="form-control" rows="2" placeholder="伝言・連絡事項を入力..."></textarea>
+              </div>
+              <button id="postManagerIssue" class="btn btn-secondary btn-sm">投稿</button>
+            </div>
+
+            <!-- フィルタ -->
+            <div class="issue-filters">
+              <button class="issue-filter active" data-filter="all">すべて</button>
+              <button class="issue-filter" data-filter="未対応">未対応</button>
+              <button class="issue-filter" data-filter="対応中">対応中</button>
+              <button class="issue-filter" data-filter="完了">完了</button>
+            </div>
+
+            <div id="managerIssuesList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== キャスト画面 ========== -->
+    <div id="castScreen" class="screen hidden">
+      <div class="container">
+        <div class="header">
+          <div class="row">
+            <div class="col">
+              <h1 id="castScreenName"></h1>
+              <span class="text-sm text-muted"><span id="castScreenStore"></span> / 営業日: <span id="castDate"></span></span>
+            </div>
+            <div class="col text-right">
+              <button id="castBack" class="btn btn-outline btn-sm">戻る</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- タブ -->
+        <div class="tabs">
+          <div class="tab active" data-tab="castGoal">入力</div>
+          <div class="tab" data-tab="castChoreiView">朝礼</div>
+          <div class="tab" data-tab="castShureiView">終礼</div>
+          <div class="tab" data-tab="castEval">振り返り</div>
+          <div class="tab" data-tab="castIssues">伝言板</div>
+        </div>
+
+        <!-- 目標入力タブ -->
+        <div id="castGoalTab" class="tab-content active">
+          <div class="card goal-card">
+            <div class="card-title">今日の目標</div>
+            <div id="castGoalAlert" class="alert hidden"></div>
+
+            <div class="form-group">
+              <textarea id="castGoalInput" class="form-control" rows="3" placeholder="今日の目標を書いてね"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label style="color:#fff">来店予定</label>
+              <div class="row" style="align-items:center; gap:8px;">
+                <input type="number" id="castVisitorsInput" class="form-control" style="width:80px; flex:none;" min="0" value="0">
+                <span>組</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:#fff">送迎</label>
+              <label class="switch-label">
+                <div class="switch">
+                  <input type="checkbox" id="castPickupCheck">
+                  <span class="switch-slider"></span>
+                </div>
+                <span>送迎を使う</span>
+              </label>
+              <div id="castPickupDestGroup" class="hidden" style="margin-top:8px;">
+                <div class="pickup-zip-row">
+                  <input type="text" id="castPickupZip" class="form-control" placeholder="郵便番号（7桁）" maxlength="8" style="width:140px; flex:none;">
+                  <button type="button" id="castPickupZipBtn" class="btn btn-secondary btn-sm">検索</button>
+                </div>
+                <div class="form-group" style="margin-top:6px;">
+                  <input type="text" id="castPickupDest" class="form-control" placeholder="住所を入力 or 郵便番号で検索">
+                </div>
+              </div>
+            </div>
+
+            <button id="saveCastGoal" class="btn btn-primary btn-block">保存</button>
+          </div>
+        </div>
+
+        <!-- 朝礼閲覧タブ -->
+        <div id="castChoreiViewTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">今日の朝礼</div>
+            <div id="castChoreiViewContent"></div>
+          </div>
+        </div>
+
+        <!-- 終礼閲覧タブ -->
+        <div id="castShureiViewTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">本日の売上</div>
+            <div id="castShureiViewContent"></div>
+          </div>
+        </div>
+
+        <!-- 振り返りタブ -->
+        <div id="castEvalTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">今日の振り返り</div>
+            <div id="castEvalAlert" class="alert hidden"></div>
+
+            <div class="form-group">
+              <label>自己採点（10段階）</label>
+              <div class="score-selector" id="scoreSelector">
+                <button class="score-btn" data-score="1">1</button>
+                <button class="score-btn" data-score="2">2</button>
+                <button class="score-btn" data-score="3">3</button>
+                <button class="score-btn" data-score="4">4</button>
+                <button class="score-btn" data-score="5">5</button>
+                <button class="score-btn" data-score="6">6</button>
+                <button class="score-btn" data-score="7">7</button>
+                <button class="score-btn" data-score="8">8</button>
+                <button class="score-btn" data-score="9">9</button>
+                <button class="score-btn" data-score="10">10</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>振り返りコメント</label>
+              <textarea id="evalComment" class="form-control" rows="3" placeholder="今日の反省や気づきを書いてね"></textarea>
+            </div>
+
+            <button id="saveEvalBtn" class="btn btn-primary btn-block">保存</button>
+          </div>
+        </div>
+
+        <!-- 伝言板タブ（キャスト用・閲覧のみ） -->
+        <div id="castIssuesTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">伝言板</div>
+
+            <div id="castIssuesList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 専任画面 ========== -->
+    <div id="adminScreen" class="screen hidden">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>本部</h1>
+          <div class="subtitle" id="adminName"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">店責代行する店舗を選択</div>
+          <div class="form-group">
+            <select id="adminStoreSelect" class="form-control">
+              <option value="">店舗を選択...</option>
+            </select>
+          </div>
+          <p class="text-sm text-muted">選択すると店責画面に入ります（自分はキャスト一覧に入りません）</p>
+        </div>
+
+        <button id="adminBack" class="btn btn-text btn-block">戻る</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/scripts/app.js"></script>
+</body>
+</html>
