@@ -628,6 +628,7 @@ select.form-control { appearance: auto; }
 }
 .eval-item-score.eval-done { background: var(--accent-bg); color: #00A382; }
 .eval-item-score.eval-pending { background: var(--bg); color: var(--text-light); }
+.eval-item-goal { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 4px; }
 .eval-item-comment { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; }
 .badge-early-leave { background: var(--danger-bg); color: var(--danger); margin-top: 6px; display: inline-block; }
 
@@ -730,7 +731,6 @@ select.form-control { appearance: auto; }
 
   .account-detail { font-size: 0.6875rem; }
 
-  .shurei-sales-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
   .shurei-view-grid { grid-template-columns: 1fr 1fr; }
 
   .score-selector { gap: 4px; }

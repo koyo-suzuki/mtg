@@ -274,27 +274,24 @@ app.get('/api/my-stores/:gmail', (req, res) => {
  * 終礼データ保存（店責用）
  */
 app.post('/api/shurei', (req, res) => {
-  const { storeId, salesCash, salesCard, salesPaypay, salesRoselink, monthlySales } = req.body;
+  const { storeId, salesToday, monthlySales } = req.body;
   const date = getBusinessDate();
 
   try {
-    const salesTotal = (salesCash || 0) + (salesCard || 0) + (salesPaypay || 0) + (salesRoselink || 0);
-
     const existing = db.prepare(
       'SELECT id FROM shurei WHERE date = ? AND store_id = ?'
     ).get(date, storeId);
 
     if (existing) {
       db.prepare(`
-        UPDATE shurei SET sales_cash = ?, sales_card = ?, sales_paypay = ?,
-          sales_roselink = ?, sales_total = ?, monthly_sales = ?
+        UPDATE shurei SET sales_total = ?, monthly_sales = ?
         WHERE id = ?
-      `).run(salesCash || 0, salesCard || 0, salesPaypay || 0, salesRoselink || 0, salesTotal, monthlySales || 0, existing.id);
+      `).run(salesToday || 0, monthlySales || 0, existing.id);
     } else {
       db.prepare(`
-        INSERT INTO shurei (date, store_id, sales_cash, sales_card, sales_paypay, sales_roselink, sales_total, monthly_sales)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(date, storeId, salesCash || 0, salesCard || 0, salesPaypay || 0, salesRoselink || 0, salesTotal, monthlySales || 0);
+        INSERT INTO shurei (date, store_id, sales_total, monthly_sales)
+        VALUES (?, ?, ?, ?)
+      `).run(date, storeId, salesToday || 0, monthlySales || 0);
     }
 
     res.json({ success: true });

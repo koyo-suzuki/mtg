@@ -13,6 +13,7 @@ const State = {
   castMaster: [],
   choreiCasts: [],
   selectedScore: null,
+  managerSelectedScore: null,
   issueFilter: 'all'
 };
 
@@ -41,9 +42,6 @@ function setupEvents() {
 
   // 終礼
   document.getElementById('saveShureiBtn').addEventListener('click', onSaveShurei);
-  document.querySelectorAll('.shurei-input').forEach(input => {
-    input.addEventListener('input', updateShureiTotal);
-  });
 
   // 店責伝言板
   document.getElementById('postManagerIssue').addEventListener('click', () => onPostIssue('manager'));
@@ -61,8 +59,11 @@ function setupEvents() {
     btn.addEventListener('click', onScoreSelect);
   });
 
-  // キャスト伝言板
-  document.getElementById('postCastIssue').addEventListener('click', () => onPostIssue('cast'));
+  // 店責振り返り
+  document.getElementById('saveManagerEvalBtn').addEventListener('click', onSaveManagerEval);
+  document.querySelectorAll('.manager-score-btn').forEach(btn => {
+    btn.addEventListener('click', onManagerScoreSelect);
+  });
 
   // 専任画面
   document.getElementById('adminBack').addEventListener('click', showLogin);
@@ -390,10 +391,6 @@ function renderChoreiCastList() {
         <label>キャスト目標</label>
         ${goalHtml}
       </div>
-      <div class="form-group">
-        <label>メモ</label>
-        <textarea class="form-control chorei-memo" data-index="${i}" rows="2" placeholder="メモ">${escapeHtml(cast.managerMemo || '')}</textarea>
-      </div>
     `;
     container.appendChild(row);
   });
@@ -410,7 +407,6 @@ function renderChoreiCastList() {
 async function onSaveChorei() {
   const salesInputs = document.querySelectorAll('.chorei-monthly-sales');
   const drinksInputs = document.querySelectorAll('.chorei-monthly-drinks');
-  const memoInputs = document.querySelectorAll('.chorei-memo');
 
   const casts = State.choreiCasts.map((cast, i) => ({
     castName: cast.castName,
@@ -418,7 +414,7 @@ async function onSaveChorei() {
     monthlySales: parseInt(salesInputs[i]?.value) || 0,
     monthlyDrinks: parseInt(drinksInputs[i]?.value) || 0,
     expectedVisitors: cast.expectedVisitors || 0,
-    managerMemo: memoInputs[i]?.value || ''
+    managerMemo: ''
   }));
 
   const result = await api('/api/chorei', {
@@ -579,8 +575,7 @@ function onTabChange(e) {
 
   // タブ切り替え時のデータ読み込み
   if (tabName === 'castChoreiView') loadCastData();
-  if (tabName === 'shurei') loadShureiData();
-  if (tabName === 'managerEval') loadManagerEvalData();
+  if (tabName === 'shurei') { loadShureiData(); loadManagerEvalData(); loadManagerOwnEval(); }
   if (tabName === 'managerIssues') loadIssues('manager');
   if (tabName === 'castShureiView') loadCastShureiView();
   if (tabName === 'castEval') loadCastEvalData();
@@ -596,22 +591,9 @@ async function loadShureiData() {
   if (!result.success) return;
 
   if (result.data) {
-    document.getElementById('shureiCash').value = result.data.sales_cash || 0;
-    document.getElementById('shureiCard').value = result.data.sales_card || 0;
-    document.getElementById('shureiPaypay').value = result.data.sales_paypay || 0;
-    document.getElementById('shureiRoselink').value = result.data.sales_roselink || 0;
+    document.getElementById('shureiSalesTotal').value = result.data.sales_total || 0;
     document.getElementById('shureiMonthlySales').value = result.data.monthly_sales || 0;
   }
-  updateShureiTotal();
-}
-
-function updateShureiTotal() {
-  const cash = parseInt(document.getElementById('shureiCash').value) || 0;
-  const card = parseInt(document.getElementById('shureiCard').value) || 0;
-  const paypay = parseInt(document.getElementById('shureiPaypay').value) || 0;
-  const roselink = parseInt(document.getElementById('shureiRoselink').value) || 0;
-  const total = cash + card + paypay + roselink;
-  document.getElementById('shureiTotal').textContent = `¥${total.toLocaleString()}`;
 }
 
 async function onSaveShurei() {
@@ -619,10 +601,7 @@ async function onSaveShurei() {
     method: 'POST',
     body: JSON.stringify({
       storeId: State.storeId,
-      salesCash: parseInt(document.getElementById('shureiCash').value) || 0,
-      salesCard: parseInt(document.getElementById('shureiCard').value) || 0,
-      salesPaypay: parseInt(document.getElementById('shureiPaypay').value) || 0,
-      salesRoselink: parseInt(document.getElementById('shureiRoselink').value) || 0,
+      salesToday: parseInt(document.getElementById('shureiSalesTotal').value) || 0,
       monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0
     })
   });
@@ -646,26 +625,8 @@ async function loadCastShureiView() {
 
   const d = result.data;
   container.innerHTML = `
-    <div class="shurei-view-grid">
-      <div class="shurei-view-item">
-        <span class="shurei-view-label">現金</span>
-        <span class="shurei-view-value">¥${(d.sales_cash || 0).toLocaleString()}</span>
-      </div>
-      <div class="shurei-view-item">
-        <span class="shurei-view-label">カード</span>
-        <span class="shurei-view-value">¥${(d.sales_card || 0).toLocaleString()}</span>
-      </div>
-      <div class="shurei-view-item">
-        <span class="shurei-view-label">PayPay</span>
-        <span class="shurei-view-value">¥${(d.sales_paypay || 0).toLocaleString()}</span>
-      </div>
-      <div class="shurei-view-item">
-        <span class="shurei-view-label">RoseLink</span>
-        <span class="shurei-view-value">¥${(d.sales_roselink || 0).toLocaleString()}</span>
-      </div>
-    </div>
     <div class="shurei-total-row">
-      <span class="shurei-total-label">合計</span>
+      <span class="shurei-total-label">本日の売上</span>
       <span class="shurei-total-value">¥${(d.sales_total || 0).toLocaleString()}</span>
     </div>
     <div class="shurei-monthly-row">
@@ -758,6 +719,13 @@ async function loadManagerEvalData() {
         <span class="eval-item-score ${statusClass}">${statusLabel}</span>
       </div>`;
 
+    // 今日の目標を表示
+    if (cast.castGoal) {
+      html += `<div class="eval-item-goal"><strong>目標:</strong> ${escapeHtml(cast.castGoal)}</div>`;
+    } else {
+      html += `<div class="eval-item-goal text-muted">目標未設定</div>`;
+    }
+
     if (ev) {
       html += `<div class="eval-item-comment">${ev.comment ? escapeHtml(ev.comment) : '<span class="text-muted">コメントなし</span>'}</div>`;
     }
@@ -767,6 +735,55 @@ async function loadManagerEvalData() {
 
   html += '</div>';
   container.innerHTML = html;
+}
+
+// 店責自身の振り返りデータ読み込み
+async function loadManagerOwnEval() {
+  const result = await api(`/api/self-evaluation/${State.storeId}`);
+  if (!result.success) return;
+
+  const myEval = result.evaluations.find(e => e.gmail === State.gmail);
+  if (myEval) {
+    State.managerSelectedScore = myEval.score;
+    document.getElementById('managerEvalComment').value = myEval.comment || '';
+    document.querySelectorAll('.manager-score-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.score) === myEval.score);
+    });
+  }
+}
+
+function onManagerScoreSelect(e) {
+  const score = parseInt(e.currentTarget.dataset.score);
+  State.managerSelectedScore = score;
+  document.querySelectorAll('.manager-score-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.score) === score);
+  });
+}
+
+async function onSaveManagerEval() {
+  if (!State.managerSelectedScore) {
+    showAlert('managerEvalAlert', 'error', '点数を選んでください');
+    return;
+  }
+
+  const result = await api('/api/self-evaluation', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeId: State.storeId,
+      gmail: State.gmail,
+      castName: State.displayName,
+      score: State.managerSelectedScore,
+      comment: document.getElementById('managerEvalComment').value.trim(),
+      isEarlyLeave: false
+    })
+  });
+
+  showAlert('managerEvalAlert', result.success ? 'success' : 'error',
+    result.success ? '保存しました' : (result.error || '保存できませんでした'));
+
+  if (result.success) {
+    await loadManagerEvalData();
+  }
 }
 
 // =====================================================
