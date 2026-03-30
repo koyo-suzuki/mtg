@@ -1,4 +1,4 @@
-require('dotenv').config();
+try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 
 const express = require('express');
 const cors = require('cors');
@@ -43,7 +43,10 @@ function getBusinessDate() {
  */
 app.get('/api/config', (req, res) => {
   res.json({
-    googleClientId: process.env.GOOGLE_CLIENT_ID,
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+    hasConfigSheet: !!process.env.CONFIG_SPREADSHEET_ID,
+    hasDataSheet: !!process.env.DATA_SPREADSHEET_ID,
+    hasSAKey: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
   });
 });
 
