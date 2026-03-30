@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>朝礼・終礼シート v2</title>
   <link rel="stylesheet" href="/styles/style.css">
+  <script src="https://accounts.google.com/gsi/client" async></script>
 </head>
 <body>
   <div id="app">
@@ -19,9 +20,33 @@
 
         <div class="card">
           <div class="card-title">Googleアカウントでログイン</div>
-          <p class="text-sm text-muted">（ローカル版: アカウントを選択してください）</p>
+          <div id="googleSignInBtn" style="display:flex;justify-content:center;padding:20px 0;"></div>
+          <div id="loginError" class="alert alert-error hidden"></div>
+        </div>
+      </div>
+    </div>
 
-          <div id="accountList" class="account-list"></div>
+    <!-- ========== 店責: ロール選択画面 ========== -->
+    <div id="roleSelectScreen" class="screen hidden">
+      <div class="container-sm">
+        <div class="header text-center">
+          <h1>モードを選択</h1>
+          <div class="subtitle" id="roleSelectGreeting"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">どちらの画面に入る？</div>
+          <div class="store-list">
+            <div class="store-item" id="roleSelectManager">
+              <span class="store-item-name">店責として入る</span>
+              <span class="store-item-arrow">&rarr;</span>
+            </div>
+            <div class="store-item" id="roleSelectCast">
+              <span class="store-item-name">キャストとして入る</span>
+              <span class="store-item-arrow">&rarr;</span>
+            </div>
+          </div>
+          <button id="roleSelectBack" class="btn btn-text btn-block mt-20">戻る</button>
         </div>
       </div>
     </div>

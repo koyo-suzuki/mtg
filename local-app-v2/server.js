@@ -1,7 +1,12 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const db = require('./src/db/database');
+const { verifyGoogleToken } = require('./src/auth/middleware');
+const { authMiddleware } = require('./src/auth/middleware');
+const configReader = require('./src/sheets/config-reader');
+const dataStore = require('./src/sheets/data-store');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -30,84 +35,67 @@ function getBusinessDate() {
 }
 
 // =====================================================
-// 認証
+// 公開API（認証不要）
 // =====================================================
 
 /**
- * ログイン可能なアカウント一覧（ローカル版用）
+ * フロントエンド用設定（Google Client ID）
  */
-app.get('/api/accounts', (req, res) => {
-  // キャスト（店責権限含む）
-  const casts = db.prepare(
-    'SELECT gmail, cast_name, role FROM cast_master ORDER BY role DESC, cast_name'
-  ).all();
-
-  // 専任
-  const admins = db.prepare('SELECT gmail, name FROM admins').all();
-
-  const accounts = [];
-
-  casts.forEach(c => {
-    accounts.push({
-      gmail: c.gmail,
-      displayName: c.cast_name,
-      role: c.role, // cast_manager or cast
-      type: c.role === 'cast_manager' ? '店責権限あり' : 'キャスト'
-    });
+app.get('/api/config', (req, res) => {
+  res.json({
+    googleClientId: process.env.GOOGLE_CLIENT_ID,
   });
-
-  admins.forEach(a => {
-    accounts.push({
-      gmail: a.gmail,
-      displayName: a.name,
-      role: 'admin',
-      type: '専任'
-    });
-  });
-
-  res.json({ success: true, accounts });
 });
 
 /**
- * ログイン
+ * Google認証ログイン
  */
-app.post('/api/auth/login', (req, res) => {
-  const { gmail } = req.body;
+app.post('/api/auth/google', async (req, res) => {
+  const { idToken } = req.body;
 
-  // まず専任チェック
-  const admin = db.prepare('SELECT gmail, name FROM admins WHERE gmail = ?').get(gmail);
-  if (admin) {
-    return res.json({
+  try {
+    const payload = await verifyGoogleToken(idToken);
+    const email = payload.email;
+
+    const user = await configReader.getUserByEmail(email);
+    if (!user) {
+      return res.json({ success: false, error: '登録されていないアカウントです' });
+    }
+
+    res.json({
       success: true,
-      gmail: admin.gmail,
-      displayName: admin.name,
-      role: 'admin',
-      isManager: false
+      gmail: user.email,
+      displayName: user.castName || payload.name || email,
+      castName: user.castName || '',
+      googleName: payload.name || '',
+      role: user.role,
+      isManager: user.role === 'cast_manager',
+      selectedStore: user.selectedStore || '',
     });
+  } catch (error) {
+    console.error('Google auth error:', error.message);
+    res.json({ success: false, error: '認証に失敗しました' });
   }
-
-  // キャストマスタチェック
-  const cast = db.prepare('SELECT gmail, cast_name, role FROM cast_master WHERE gmail = ?').get(gmail);
-  if (cast) {
-    return res.json({
-      success: true,
-      gmail: cast.gmail,
-      displayName: cast.cast_name,
-      role: cast.role,
-      isManager: cast.role === 'cast_manager'
-    });
-  }
-
-  res.json({ success: false, error: '登録されていないアカウントです' });
 });
+
+// =====================================================
+// 認証必須API
+// =====================================================
+
+app.use('/api', authMiddleware);
 
 // =====================================================
 // 店舗・営業日
 // =====================================================
 
-app.get('/api/stores', (req, res) => {
-  const stores = db.prepare('SELECT id, name, brand, area FROM stores ORDER BY name').all();
-  res.json({ success: true, stores });
+app.get('/api/stores', async (req, res) => {
+  try {
+    const stores = await configReader.getStores();
+    res.json({ success: true, stores });
+  } catch (error) {
+    console.error('Stores error:', error);
+    res.json({ success: false, error: error.message });
+  }
 });
 
 app.get('/api/business-date', (req, res) => {
@@ -118,9 +106,14 @@ app.get('/api/business-date', (req, res) => {
 // キャストマスタ
 // =====================================================
 
-app.get('/api/cast-master', (req, res) => {
-  const casts = db.prepare('SELECT gmail, cast_name, role FROM cast_master ORDER BY cast_name').all();
-  res.json({ success: true, casts });
+app.get('/api/cast-master', async (req, res) => {
+  try {
+    const casts = await configReader.getCastMembers();
+    res.json({ success: true, casts });
+  } catch (error) {
+    console.error('Cast master error:', error);
+    res.json({ success: false, error: error.message });
+  }
 });
 
 // =====================================================
@@ -130,65 +123,12 @@ app.get('/api/cast-master', (req, res) => {
 /**
  * 朝礼データ保存（店責用）
  */
-app.post('/api/chorei', (req, res) => {
-  const { storeId, casts } = req.body;
+app.post('/api/chorei', async (req, res) => {
+  const { storeCode, casts } = req.body;
   const date = getBusinessDate();
 
   try {
-    const check = db.prepare('SELECT id FROM chorei WHERE date = ? AND store_id = ? AND gmail = ?');
-    const update = db.prepare(`
-      UPDATE chorei SET cast_name = ?, monthly_sales = ?, monthly_drinks = ?,
-        expected_visitors = ?, manager_memo = ?, needs_pickup = ?, pickup_destination = ?, cast_goal = COALESCE(?, cast_goal)
-      WHERE id = ?
-    `);
-    const insert = db.prepare(`
-      INSERT INTO chorei (date, store_id, cast_name, gmail, monthly_sales, monthly_drinks, expected_visitors, manager_memo, needs_pickup, pickup_destination, cast_goal)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const existingGmails = db.prepare(
-      'SELECT gmail FROM chorei WHERE date = ? AND store_id = ?'
-    ).all(date, storeId).map(r => r.gmail);
-
-    const sentGmails = casts.map(c => c.gmail);
-
-    // 削除されたキャスト
-    const toDelete = existingGmails.filter(g => !sentGmails.includes(g));
-    if (toDelete.length > 0) {
-      const deleteSt = db.prepare('DELETE FROM chorei WHERE date = ? AND store_id = ? AND gmail = ?');
-      for (const g of toDelete) {
-        deleteSt.run(date, storeId, g);
-      }
-    }
-
-    for (const cast of casts) {
-      const existing = check.get(date, storeId, cast.gmail);
-      if (existing) {
-        update.run(
-          cast.castName,
-          cast.monthlySales || 0,
-          cast.monthlyDrinks || 0,
-          cast.expectedVisitors || 0,
-          cast.managerMemo || '',
-          cast.needsPickup ? 1 : 0,
-          cast.pickupDestination || '',
-          cast.castGoal || null,
-          existing.id
-        );
-      } else {
-        insert.run(
-          date, storeId, cast.castName, cast.gmail,
-          cast.monthlySales || 0,
-          cast.monthlyDrinks || 0,
-          cast.expectedVisitors || 0,
-          cast.managerMemo || '',
-          cast.needsPickup ? 1 : 0,
-          cast.pickupDestination || '',
-          cast.castGoal || ''
-        );
-      }
-    }
-
+    await dataStore.saveChoreiCasts(date, storeCode, casts);
     res.json({ success: true });
   } catch (error) {
     console.error('Chorei save error:', error);
@@ -199,30 +139,12 @@ app.post('/api/chorei', (req, res) => {
 /**
  * 朝礼データ取得
  */
-app.get('/api/chorei/:storeId', (req, res) => {
-  const { storeId } = req.params;
+app.get('/api/chorei/:storeCode', async (req, res) => {
+  const { storeCode } = req.params;
   const date = getBusinessDate();
 
   try {
-    const rows = db.prepare(`
-      SELECT cast_name, gmail, monthly_sales, monthly_drinks, expected_visitors,
-             cast_goal, manager_memo, needs_pickup, pickup_destination
-      FROM chorei
-      WHERE date = ? AND store_id = ?
-    `).all(date, parseInt(storeId));
-
-    const casts = rows.map(row => ({
-      castName: row.cast_name,
-      gmail: row.gmail,
-      monthlySales: row.monthly_sales,
-      monthlyDrinks: row.monthly_drinks,
-      expectedVisitors: row.expected_visitors,
-      castGoal: row.cast_goal,
-      managerMemo: row.manager_memo,
-      needsPickup: row.needs_pickup === 1,
-      pickupDestination: row.pickup_destination || ''
-    }));
-
+    const casts = await dataStore.getChoreiByDateStore(date, storeCode);
     res.json({ success: true, casts, date });
   } catch (error) {
     res.json({ success: false, error: error.message });
@@ -232,18 +154,15 @@ app.get('/api/chorei/:storeId', (req, res) => {
 /**
  * キャスト目標保存
  */
-app.post('/api/cast-goal', (req, res) => {
-  const { storeId, gmail, goal, expectedVisitors, needsPickup, pickupDestination } = req.body;
+app.post('/api/cast-goal', async (req, res) => {
+  const { storeCode, gmail, goal, expectedVisitors, needsPickup, pickupDestination } = req.body;
   const date = getBusinessDate();
 
   try {
-    const existing = db.prepare(
-      'SELECT id FROM chorei WHERE date = ? AND store_id = ? AND gmail = ?'
-    ).get(date, storeId, gmail);
-
-    if (existing) {
-      db.prepare('UPDATE chorei SET cast_goal = ?, expected_visitors = ?, needs_pickup = ?, pickup_destination = ? WHERE id = ?')
-        .run(goal, expectedVisitors || 0, needsPickup ? 1 : 0, pickupDestination || '', existing.id);
+    const updated = await dataStore.saveCastGoal(date, storeCode, gmail, {
+      goal, expectedVisitors, needsPickup, pickupDestination,
+    });
+    if (updated) {
       res.json({ success: true });
     } else {
       res.json({ success: false, error: '朝礼にまだ追加されていません' });
@@ -256,19 +175,22 @@ app.post('/api/cast-goal', (req, res) => {
 /**
  * キャストが今日出勤している店舗を取得
  */
-app.get('/api/my-stores/:gmail', (req, res) => {
+app.get('/api/my-stores/:gmail', async (req, res) => {
   const { gmail } = req.params;
   const date = getBusinessDate();
 
   try {
-    const rows = db.prepare(`
-      SELECT c.store_id, s.name as store_name
-      FROM chorei c
-      JOIN stores s ON c.store_id = s.id
-      WHERE c.date = ? AND c.gmail = ?
-    `).all(date, gmail);
-
-    res.json({ success: true, stores: rows });
+    const castStores = await dataStore.getCastStores(date, gmail);
+    // Resolve store names
+    const allStores = await configReader.getStores();
+    const stores = castStores.map(cs => {
+      const store = allStores.find(s => s.code === cs.storeCode);
+      return {
+        storeCode: cs.storeCode,
+        storeName: store ? store.name : cs.storeCode,
+      };
+    });
+    res.json({ success: true, stores });
   } catch (error) {
     res.json({ success: false, error: error.message });
   }
@@ -277,19 +199,22 @@ app.get('/api/my-stores/:gmail', (req, res) => {
 /**
  * 送迎一覧取得（全店舗・当日）
  */
-app.get('/api/pickup-list', (req, res) => {
+app.get('/api/pickup-list', async (req, res) => {
   const date = getBusinessDate();
 
   try {
-    const rows = db.prepare(`
-      SELECT c.cast_name, c.pickup_destination, s.name as store_name
-      FROM chorei c
-      JOIN stores s ON c.store_id = s.id
-      WHERE c.date = ? AND c.needs_pickup = 1
-      ORDER BY s.name, c.cast_name
-    `).all(date);
-
-    res.json({ success: true, pickups: rows, date });
+    const pickups = await dataStore.getPickupList(date);
+    // Resolve store names
+    const allStores = await configReader.getStores();
+    const result = pickups.map(p => {
+      const store = allStores.find(s => s.code === p.storeCode);
+      return {
+        castName: p.castName,
+        pickupDestination: p.pickupDestination,
+        storeName: store ? store.name : p.storeCode,
+      };
+    });
+    res.json({ success: true, pickups: result, date });
   } catch (error) {
     res.json({ success: false, error: error.message });
   }
@@ -299,30 +224,12 @@ app.get('/api/pickup-list', (req, res) => {
 // 終礼API
 // =====================================================
 
-/**
- * 終礼データ保存（店責用）
- */
-app.post('/api/shurei', (req, res) => {
-  const { storeId, salesToday, monthlySales } = req.body;
+app.post('/api/shurei', async (req, res) => {
+  const { storeCode, salesToday, monthlySales } = req.body;
   const date = getBusinessDate();
 
   try {
-    const existing = db.prepare(
-      'SELECT id FROM shurei WHERE date = ? AND store_id = ?'
-    ).get(date, storeId);
-
-    if (existing) {
-      db.prepare(`
-        UPDATE shurei SET sales_total = ?, monthly_sales = ?
-        WHERE id = ?
-      `).run(salesToday || 0, monthlySales || 0, existing.id);
-    } else {
-      db.prepare(`
-        INSERT INTO shurei (date, store_id, sales_total, monthly_sales)
-        VALUES (?, ?, ?, ?)
-      `).run(date, storeId, salesToday || 0, monthlySales || 0);
-    }
-
+    await dataStore.saveShurei(date, storeCode, { salesToday, monthlySales });
     res.json({ success: true });
   } catch (error) {
     console.error('Shurei save error:', error);
@@ -330,20 +237,13 @@ app.post('/api/shurei', (req, res) => {
   }
 });
 
-/**
- * 終礼データ取得
- */
-app.get('/api/shurei/:storeId', (req, res) => {
-  const { storeId } = req.params;
+app.get('/api/shurei/:storeCode', async (req, res) => {
+  const { storeCode } = req.params;
   const date = getBusinessDate();
 
   try {
-    const row = db.prepare(`
-      SELECT sales_cash, sales_card, sales_paypay, sales_roselink, sales_total, monthly_sales
-      FROM shurei WHERE date = ? AND store_id = ?
-    `).get(date, parseInt(storeId));
-
-    res.json({ success: true, data: row || null, date });
+    const data = await dataStore.getShureiByDateStore(date, storeCode);
+    res.json({ success: true, data, date });
   } catch (error) {
     res.json({ success: false, error: error.message });
   }
@@ -353,30 +253,14 @@ app.get('/api/shurei/:storeId', (req, res) => {
 // 自己採点API
 // =====================================================
 
-/**
- * 自己採点保存
- */
-app.post('/api/self-evaluation', (req, res) => {
-  const { storeId, gmail, castName, score, comment, isEarlyLeave } = req.body;
+app.post('/api/self-evaluation', async (req, res) => {
+  const { storeCode, gmail, castName, score, comment, isEarlyLeave } = req.body;
   const date = getBusinessDate();
 
   try {
-    const existing = db.prepare(
-      'SELECT id FROM self_evaluation WHERE date = ? AND store_id = ? AND gmail = ?'
-    ).get(date, storeId, gmail);
-
-    if (existing) {
-      db.prepare(`
-        UPDATE self_evaluation SET score = ?, comment = ?, is_early_leave = ?
-        WHERE id = ?
-      `).run(score, comment || '', isEarlyLeave ? 1 : 0, existing.id);
-    } else {
-      db.prepare(`
-        INSERT INTO self_evaluation (date, store_id, cast_name, gmail, score, comment, is_early_leave)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(date, storeId, castName, gmail, score, comment || '', isEarlyLeave ? 1 : 0);
-    }
-
+    await dataStore.saveSelfEval(date, storeCode, gmail, castName, {
+      score, comment, isEarlyLeave,
+    });
     res.json({ success: true });
   } catch (error) {
     console.error('Self-evaluation save error:', error);
@@ -384,22 +268,13 @@ app.post('/api/self-evaluation', (req, res) => {
   }
 });
 
-/**
- * 自己採点一覧取得（店舗・当日）
- */
-app.get('/api/self-evaluation/:storeId', (req, res) => {
-  const { storeId } = req.params;
+app.get('/api/self-evaluation/:storeCode', async (req, res) => {
+  const { storeCode } = req.params;
   const date = getBusinessDate();
 
   try {
-    const rows = db.prepare(`
-      SELECT cast_name, gmail, score, comment, is_early_leave
-      FROM self_evaluation
-      WHERE date = ? AND store_id = ?
-      ORDER BY created_at
-    `).all(date, parseInt(storeId));
-
-    res.json({ success: true, evaluations: rows, date });
+    const evaluations = await dataStore.getSelfEvalByDateStore(date, storeCode);
+    res.json({ success: true, evaluations, date });
   } catch (error) {
     res.json({ success: false, error: error.message });
   }
@@ -409,19 +284,12 @@ app.get('/api/self-evaluation/:storeId', (req, res) => {
 // 伝言板API
 // =====================================================
 
-/**
- * 伝言投稿
- */
-app.post('/api/issues', (req, res) => {
-  const { storeId, reporter, content } = req.body;
+app.post('/api/issues', async (req, res) => {
+  const { storeCode, reporter, content } = req.body;
   const date = getBusinessDate();
 
   try {
-    db.prepare(`
-      INSERT INTO issues (date, store_id, reporter, content)
-      VALUES (?, ?, ?, ?)
-    `).run(date, storeId, reporter, content);
-
+    await dataStore.createIssue(date, storeCode, reporter, content);
     res.json({ success: true });
   } catch (error) {
     console.error('Issue save error:', error);
@@ -429,42 +297,28 @@ app.post('/api/issues', (req, res) => {
   }
 });
 
-/**
- * 伝言一覧取得（店舗）
- */
-app.get('/api/issues/:storeId', (req, res) => {
-  const { storeId } = req.params;
+app.get('/api/issues/:storeCode', async (req, res) => {
+  const { storeCode } = req.params;
 
   try {
-    const rows = db.prepare(`
-      SELECT id, date, reporter, content, status, feedback, completed_at, created_at
-      FROM issues
-      WHERE store_id = ?
-      ORDER BY created_at DESC
-      LIMIT 50
-    `).all(parseInt(storeId));
-
-    res.json({ success: true, issues: rows });
+    const issues = await dataStore.getIssuesByStore(storeCode);
+    res.json({ success: true, issues });
   } catch (error) {
     res.json({ success: false, error: error.message });
   }
 });
 
-/**
- * 伝言ステータス更新
- */
-app.put('/api/issues/:id', (req, res) => {
+app.put('/api/issues/:id', async (req, res) => {
   const { id } = req.params;
   const { status, feedback } = req.body;
 
   try {
-    const completedAt = status === '完了' ? new Date().toISOString() : null;
-    db.prepare(`
-      UPDATE issues SET status = ?, feedback = ?, completed_at = ?
-      WHERE id = ?
-    `).run(status, feedback || '', completedAt, parseInt(id));
-
-    res.json({ success: true });
+    const updated = await dataStore.updateIssue(id, status, feedback);
+    if (updated) {
+      res.json({ success: true });
+    } else {
+      res.json({ success: false, error: '伝言が見つかりません' });
+    }
   } catch (error) {
     res.json({ success: false, error: error.message });
   }
@@ -477,7 +331,7 @@ app.put('/api/issues/:id', (req, res) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('=================================');
-  console.log('  朝礼・終礼シート v2');
+  console.log('  朝礼・終礼シート v2 (Production)');
   console.log(`  http://localhost:${PORT}`);
   console.log('=================================');
   console.log('');

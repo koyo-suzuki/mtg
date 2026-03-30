@@ -5,30 +5,134 @@
 const State = {
   gmail: null,
   displayName: null,
+  castName: null,
   role: null,       // 'cast_manager', 'cast', 'admin'
-  isManager: false, // 店責権限
-  storeId: null,
+  isManager: false, // 店責権限で入っているか
+  storeCode: null,
   storeName: null,
   businessDate: null,
   castMaster: [],
   choreiCasts: [],
   selectedScore: null,
   managerSelectedScore: null,
-  issueFilter: 'all'
+  issueFilter: 'all',
+  idToken: null,    // Google ID Token
+  googleClientId: null,
 };
 
 // =====================================================
 // 初期化
 // =====================================================
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadAccounts();
+document.addEventListener('DOMContentLoaded', async () => {
   setupEvents();
+  await initGoogleSignIn();
 });
 
+async function initGoogleSignIn() {
+  try {
+    const res = await fetch('/api/config');
+    const config = await res.json();
+    State.googleClientId = config.googleClientId;
+
+    // Wait for the Google Identity Services library to load
+    if (typeof google === 'undefined' || !google.accounts) {
+      // Library not loaded yet, wait for it
+      await new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (typeof google !== 'undefined' && google.accounts) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 100);
+        // Timeout after 5 seconds
+        setTimeout(() => { clearInterval(check); resolve(); }, 5000);
+      });
+    }
+
+    if (typeof google !== 'undefined' && google.accounts) {
+      google.accounts.id.initialize({
+        client_id: State.googleClientId,
+        callback: handleGoogleCredentialResponse,
+      });
+      google.accounts.id.renderButton(
+        document.getElementById('googleSignInBtn'),
+        { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ja', width: 280 }
+      );
+    }
+  } catch (e) {
+    console.error('Google Sign-In init error:', e);
+  }
+}
+
+async function handleGoogleCredentialResponse(response) {
+  const loginError = document.getElementById('loginError');
+  loginError.classList.add('hidden');
+
+  try {
+    const result = await fetch('/api/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: response.credential }),
+    }).then(r => r.json());
+
+    if (!result.success) {
+      loginError.textContent = result.error;
+      loginError.classList.remove('hidden');
+      return;
+    }
+
+    State.idToken = response.credential;
+    State.gmail = result.gmail;
+    State.displayName = result.displayName;
+    State.castName = result.castName || result.displayName;
+    State.role = result.role;
+    State.isManager = false; // Will be set when choosing mode
+
+    const dateResult = await api('/api/business-date');
+    State.businessDate = dateResult.date;
+
+    if (result.role === 'admin') {
+      await showAdminScreen();
+    } else if (result.role === 'cast_manager') {
+      showRoleSelectScreen();
+    } else {
+      // cast
+      State.isManager = false;
+      await showStoreSelection();
+    }
+  } catch (e) {
+    loginError.textContent = '通信エラーが発生しました';
+    loginError.classList.remove('hidden');
+  }
+}
+
 function setupEvents() {
-  document.getElementById('castStoreBack').addEventListener('click', showLogin);
-  document.getElementById('managerBack').addEventListener('click', showLogin);
+  // ロール選択
+  document.getElementById('roleSelectManager').addEventListener('click', async () => {
+    State.isManager = true;
+    await showStoreSelection();
+  });
+  document.getElementById('roleSelectCast').addEventListener('click', async () => {
+    State.isManager = false;
+    await showStoreSelection();
+  });
+  document.getElementById('roleSelectBack').addEventListener('click', showLogin);
+
+  document.getElementById('castStoreBack').addEventListener('click', () => {
+    if (State.role === 'cast_manager') {
+      showRoleSelectScreen();
+    } else {
+      showLogin();
+    }
+  });
+  document.getElementById('managerBack').addEventListener('click', () => {
+    if (State.role === 'cast_manager') {
+      showRoleSelectScreen();
+    } else {
+      showLogin();
+    }
+  });
   document.getElementById('saveChoreiBtn').addEventListener('click', onSaveChorei);
 
   // キャスト検索
@@ -50,7 +154,13 @@ function setupEvents() {
   });
 
   // キャスト画面
-  document.getElementById('castBack').addEventListener('click', showLogin);
+  document.getElementById('castBack').addEventListener('click', () => {
+    if (State.role === 'cast_manager') {
+      showRoleSelectScreen();
+    } else {
+      showLogin();
+    }
+  });
   document.getElementById('saveCastGoal').addEventListener('click', onSaveCastGoal);
 
   // キャスト送迎トグル
@@ -94,87 +204,16 @@ function setupEvents() {
 // =====================================================
 
 async function api(endpoint, options = {}) {
-  const res = await fetch(endpoint, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...options.headers }
-  });
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (State.idToken) {
+    headers['Authorization'] = `Bearer ${State.idToken}`;
+  }
+  const res = await fetch(endpoint, { ...options, headers });
+  if (res.status === 401) {
+    showLogin();
+    return { success: false, error: 'セッションが切れました。再度ログインしてください。' };
+  }
   return res.json();
-}
-
-// =====================================================
-// ログイン画面
-// =====================================================
-
-async function loadAccounts() {
-  const result = await api('/api/accounts');
-  if (!result.success) return;
-
-  const container = document.getElementById('accountList');
-  container.innerHTML = '';
-
-  // グループ分け
-  const managers = result.accounts.filter(a => a.role === 'cast_manager');
-  const casts = result.accounts.filter(a => a.role === 'cast');
-  const admins = result.accounts.filter(a => a.role === 'admin');
-
-  function renderGroup(label, accounts, avatarClass, badgeClass) {
-    if (accounts.length === 0) return;
-    const groupLabel = document.createElement('div');
-    groupLabel.className = 'account-group-label';
-    groupLabel.textContent = label;
-    container.appendChild(groupLabel);
-
-    accounts.forEach(account => {
-      const el = document.createElement('div');
-      el.className = 'account-item';
-
-      const initial = account.displayName.charAt(0);
-
-      el.innerHTML = `
-        <div class="account-avatar ${avatarClass}">${initial}</div>
-        <div class="account-info">
-          <div class="account-name">${account.displayName}</div>
-          <div class="account-detail">${account.gmail}</div>
-        </div>
-        <span class="role-badge ${badgeClass}">${account.type}</span>
-      `;
-
-      el.addEventListener('click', () => onLogin(account.gmail));
-      container.appendChild(el);
-    });
-  }
-
-  renderGroup('店責権限あり', managers, 'avatar-manager', 'role-manager');
-  renderGroup('キャスト', casts, 'avatar-cast', 'role-cast');
-  renderGroup('専任', admins, 'avatar-admin', 'role-admin');
-}
-
-async function onLogin(gmail) {
-  const result = await api('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ gmail })
-  });
-
-  if (!result.success) {
-    alert(result.error);
-    return;
-  }
-
-  State.gmail = result.gmail;
-  State.displayName = result.displayName;
-  State.role = result.role;
-  State.isManager = result.isManager;
-
-  const dateResult = await api('/api/business-date');
-  State.businessDate = dateResult.date;
-
-  if (result.role === 'admin') {
-    // 専任 → 店舗選択してから店責画面（自分はキャスト一覧に入らない）
-    await showAdminScreen();
-  } else {
-    // cast_manager or cast → まず店舗選択
-    await showStoreSelection();
-  }
 }
 
 // =====================================================
@@ -190,10 +229,21 @@ function showLogin() {
   document.getElementById('loginScreen').classList.remove('hidden');
   State.gmail = null;
   State.displayName = null;
+  State.castName = null;
   State.role = null;
   State.isManager = false;
-  State.storeId = null;
+  State.storeCode = null;
   State.storeName = null;
+  State.idToken = null;
+  if (typeof google !== 'undefined' && google.accounts) {
+    google.accounts.id.disableAutoSelect();
+  }
+}
+
+function showRoleSelectScreen() {
+  hideAllScreens();
+  document.getElementById('roleSelectScreen').classList.remove('hidden');
+  document.getElementById('roleSelectGreeting').textContent = `${State.displayName} さん`;
 }
 
 // =====================================================
@@ -221,10 +271,10 @@ async function showStoreSelection() {
     el.className = 'store-item';
     el.innerHTML = `
       <span class="store-item-name">${store.name}</span>
-      <span class="store-item-arrow">→</span>
+      <span class="store-item-arrow">&rarr;</span>
     `;
     el.addEventListener('click', async () => {
-      State.storeId = store.id;
+      State.storeCode = store.code;
       State.storeName = store.name;
 
       if (State.isManager) {
@@ -271,7 +321,7 @@ function autoAddSelf() {
   if (!master) return;
 
   State.choreiCasts.unshift({
-    castName: master.cast_name,
+    castName: master.castName,
     gmail: master.gmail,
     monthlySales: 0,
     monthlyDrinks: 0,
@@ -300,7 +350,7 @@ function onCastSearch() {
   const addedGmails = State.choreiCasts.map(c => c.gmail);
 
   const matches = State.castMaster
-    .filter(c => c.cast_name.toLowerCase().includes(query))
+    .filter(c => (c.castName || '').toLowerCase().includes(query))
     .slice(0, 20);
 
   if (matches.length === 0) {
@@ -314,7 +364,7 @@ function onCastSearch() {
     const isAdded = addedGmails.includes(cast.gmail);
     const el = document.createElement('div');
     el.className = 'cast-search-item' + (isAdded ? ' already-added' : '');
-    el.innerHTML = `<span class="cast-search-name">${escapeHtml(cast.cast_name)}</span>`;
+    el.innerHTML = `<span class="cast-search-name">${escapeHtml(cast.castName || '')}</span>`;
 
     if (!isAdded) {
       el.addEventListener('click', () => {
@@ -334,7 +384,7 @@ function addCastToChorei(masterCast) {
   if (State.choreiCasts.find(c => c.gmail === masterCast.gmail)) return;
 
   State.choreiCasts.push({
-    castName: masterCast.cast_name,
+    castName: masterCast.castName,
     gmail: masterCast.gmail,
     monthlySales: 0,
     monthlyDrinks: 0,
@@ -351,7 +401,7 @@ function addCastToChorei(masterCast) {
 // ---- 朝礼データ ----
 
 async function loadChoreiData() {
-  const result = await api(`/api/chorei/${State.storeId}`);
+  const result = await api(`/api/chorei/${State.storeCode}`);
   if (result.success) {
     State.choreiCasts = result.casts;
     renderChoreiCastList();
@@ -519,7 +569,7 @@ async function onSaveChorei() {
 
   const result = await api('/api/chorei', {
     method: 'POST',
-    body: JSON.stringify({ storeId: State.storeId, casts })
+    body: JSON.stringify({ storeCode: State.storeCode, casts })
   });
 
   if (result.success) {
@@ -546,7 +596,7 @@ async function showCastScreen() {
 }
 
 async function loadCastData() {
-  const result = await api(`/api/chorei/${State.storeId}`);
+  const result = await api(`/api/chorei/${State.storeCode}`);
   if (!result.success) return;
 
   const myData = result.casts.find(c => c.gmail === State.gmail);
@@ -589,7 +639,7 @@ function renderCastChoreiView(casts) {
     const nameStyle = isSelf ? 'font-weight:700; color:#9C27B0;' : '';
     html += `<tr>
       <td style="${nameStyle}">${escapeHtml(cast.castName)}${isSelf ? '（自分）' : ''}</td>
-      <td>¥${(cast.monthlySales || 0).toLocaleString()}</td>
+      <td>&yen;${(cast.monthlySales || 0).toLocaleString()}</td>
       <td>${cast.monthlyDrinks || 0}杯</td>
       <td>${cast.expectedVisitors || 0}組</td>
       <td><div class="goal-scroll">${cast.castGoal ? escapeHtml(cast.castGoal) : '<span class="text-muted">-</span>'}</div></td>
@@ -607,7 +657,7 @@ async function onSaveCastGoal() {
   const pickupDestination = document.getElementById('castPickupDest').value.trim();
   const result = await api('/api/cast-goal', {
     method: 'POST',
-    body: JSON.stringify({ storeId: State.storeId, gmail: State.gmail, goal, expectedVisitors, needsPickup, pickupDestination })
+    body: JSON.stringify({ storeCode: State.storeCode, gmail: State.gmail, goal, expectedVisitors, needsPickup, pickupDestination })
   });
 
   if (result.success) {
@@ -661,7 +711,7 @@ async function showAdminScreen() {
   select.innerHTML = '<option value="">店舗を選択...</option>';
   result.stores.forEach(store => {
     const opt = document.createElement('option');
-    opt.value = store.id;
+    opt.value = store.code;
     opt.textContent = store.name;
     select.appendChild(opt);
   });
@@ -669,11 +719,12 @@ async function showAdminScreen() {
 
 async function onAdminStoreSelect() {
   const select = document.getElementById('adminStoreSelect');
-  const storeId = parseInt(select.value);
-  if (!storeId) return;
+  const storeCode = select.value;
+  if (!storeCode) return;
 
-  State.storeId = storeId;
+  State.storeCode = storeCode;
   State.storeName = select.options[select.selectedIndex].textContent;
+  State.isManager = true;
 
   // 店責画面に遷移（ただし自分はキャスト一覧に入らない）
   await showManagerScreen();
@@ -713,12 +764,12 @@ function onTabChange(e) {
 // =====================================================
 
 async function loadShureiData() {
-  const result = await api(`/api/shurei/${State.storeId}`);
+  const result = await api(`/api/shurei/${State.storeCode}`);
   if (!result.success) return;
 
   if (result.data) {
-    document.getElementById('shureiSalesTotal').value = result.data.sales_total || 0;
-    document.getElementById('shureiMonthlySales').value = result.data.monthly_sales || 0;
+    document.getElementById('shureiSalesTotal').value = result.data.salesToday || 0;
+    document.getElementById('shureiMonthlySales').value = result.data.monthlySales || 0;
   }
 }
 
@@ -726,7 +777,7 @@ async function onSaveShurei() {
   const result = await api('/api/shurei', {
     method: 'POST',
     body: JSON.stringify({
-      storeId: State.storeId,
+      storeCode: State.storeCode,
       salesToday: parseInt(document.getElementById('shureiSalesTotal').value) || 0,
       monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0
     })
@@ -741,7 +792,7 @@ async function onSaveShurei() {
 // =====================================================
 
 async function loadCastShureiView() {
-  const result = await api(`/api/shurei/${State.storeId}`);
+  const result = await api(`/api/shurei/${State.storeCode}`);
   const container = document.getElementById('castShureiViewContent');
 
   if (!result.success || !result.data) {
@@ -753,11 +804,11 @@ async function loadCastShureiView() {
   container.innerHTML = `
     <div class="shurei-total-row">
       <span class="shurei-total-label">本日の売上</span>
-      <span class="shurei-total-value">¥${(d.sales_total || 0).toLocaleString()}</span>
+      <span class="shurei-total-value">&yen;${(d.salesToday || 0).toLocaleString()}</span>
     </div>
     <div class="shurei-monthly-row">
       <span>今月の店舗売上</span>
-      <span class="shurei-monthly-value">¥${(d.monthly_sales || 0).toLocaleString()}</span>
+      <span class="shurei-monthly-value">&yen;${(d.monthlySales || 0).toLocaleString()}</span>
     </div>
   `;
 }
@@ -769,20 +820,20 @@ async function loadCastShureiView() {
 function onScoreSelect(e) {
   const score = parseInt(e.currentTarget.dataset.score);
   State.selectedScore = score;
-  document.querySelectorAll('.score-btn').forEach(btn => {
+  document.querySelectorAll('#scoreSelector .score-btn').forEach(btn => {
     btn.classList.toggle('active', parseInt(btn.dataset.score) === score);
   });
 }
 
 async function loadCastEvalData() {
-  const result = await api(`/api/self-evaluation/${State.storeId}`);
+  const result = await api(`/api/self-evaluation/${State.storeCode}`);
   if (!result.success) return;
 
   const myEval = result.evaluations.find(e => e.gmail === State.gmail);
   if (myEval) {
     State.selectedScore = myEval.score;
     document.getElementById('evalComment').value = myEval.comment || '';
-    document.querySelectorAll('.score-btn').forEach(btn => {
+    document.querySelectorAll('#scoreSelector .score-btn').forEach(btn => {
       btn.classList.toggle('active', parseInt(btn.dataset.score) === myEval.score);
     });
   }
@@ -797,9 +848,9 @@ async function onSaveEval() {
   const result = await api('/api/self-evaluation', {
     method: 'POST',
     body: JSON.stringify({
-      storeId: State.storeId,
+      storeCode: State.storeCode,
       gmail: State.gmail,
-      castName: State.displayName,
+      castName: State.castName || State.displayName,
       score: State.selectedScore,
       comment: document.getElementById('evalComment').value.trim(),
       isEarlyLeave: false
@@ -815,9 +866,8 @@ async function onSaveEval() {
 // =====================================================
 
 async function loadManagerEvalData() {
-  // 朝礼に登録されているキャスト一覧を取得
-  const choreiResult = await api(`/api/chorei/${State.storeId}`);
-  const evalResult = await api(`/api/self-evaluation/${State.storeId}`);
+  const choreiResult = await api(`/api/chorei/${State.storeCode}`);
+  const evalResult = await api(`/api/self-evaluation/${State.storeCode}`);
   const container = document.getElementById('managerEvalContent');
 
   if (!evalResult.success) {
@@ -845,7 +895,6 @@ async function loadManagerEvalData() {
         <span class="eval-item-score ${statusClass}">${statusLabel}</span>
       </div>`;
 
-    // 今日の目標を表示
     if (cast.castGoal) {
       html += `<div class="eval-item-goal"><strong>目標:</strong> ${escapeHtml(cast.castGoal)}</div>`;
     } else {
@@ -865,7 +914,7 @@ async function loadManagerEvalData() {
 
 // 店責自身の振り返りデータ読み込み
 async function loadManagerOwnEval() {
-  const result = await api(`/api/self-evaluation/${State.storeId}`);
+  const result = await api(`/api/self-evaluation/${State.storeCode}`);
   if (!result.success) return;
 
   const myEval = result.evaluations.find(e => e.gmail === State.gmail);
@@ -895,9 +944,9 @@ async function onSaveManagerEval() {
   const result = await api('/api/self-evaluation', {
     method: 'POST',
     body: JSON.stringify({
-      storeId: State.storeId,
+      storeCode: State.storeCode,
       gmail: State.gmail,
-      castName: State.displayName,
+      castName: State.castName || State.displayName,
       score: State.managerSelectedScore,
       comment: document.getElementById('managerEvalComment').value.trim(),
       isEarlyLeave: false
@@ -938,8 +987,8 @@ async function loadPickupList() {
   // 店舗ごとにグルーピング
   const byStore = {};
   pickups.forEach(p => {
-    if (!byStore[p.store_name]) byStore[p.store_name] = [];
-    byStore[p.store_name].push(p);
+    if (!byStore[p.storeName]) byStore[p.storeName] = [];
+    byStore[p.storeName].push(p);
   });
 
   // 日付フォーマット (M/D)
@@ -952,8 +1001,8 @@ async function loadPickupList() {
     html += `<div class="pickup-store-header">${escapeHtml(storeName)} ${dateStr} 送迎一覧</div>`;
     members.forEach(m => {
       html += `<div class="pickup-member">`;
-      html += `<div class="pickup-member-name">・${escapeHtml(m.cast_name)}</div>`;
-      html += `<div class="pickup-member-dest">・${escapeHtml(m.pickup_destination || '未入力')}</div>`;
+      html += `<div class="pickup-member-name">&middot;${escapeHtml(m.castName)}</div>`;
+      html += `<div class="pickup-member-dest">&middot;${escapeHtml(m.pickupDestination || '未入力')}</div>`;
       html += `</div>`;
     });
     html += `</div>`;
@@ -1015,7 +1064,7 @@ function fallbackCopy(text) {
 // =====================================================
 
 async function loadIssues(context) {
-  const result = await api(`/api/issues/${State.storeId}`);
+  const result = await api(`/api/issues/${State.storeCode}`);
   const listId = context === 'manager' ? 'managerIssuesList' : 'castIssuesList';
   const container = document.getElementById(listId);
 
@@ -1048,12 +1097,11 @@ async function loadIssues(context) {
       </div>
       <div class="issue-item-content">${escapeHtml(issue.content)}</div>
       <div class="issue-item-footer">
-        <span class="issue-status ${statusClass}">${escapeHtml(issue.status)}</span>`;
+        <span class="issue-status ${statusClass}">${escapeHtml(issue.status || '未対応')}</span>`;
 
-    // 店責・専任はステータス変更可能
     if (context === 'manager') {
       html += `<select class="issue-status-select" data-issue-id="${issue.id}" onchange="onIssueStatusChange(this)">
-        <option value="未対応" ${issue.status === '未対応' ? 'selected' : ''}>未対応</option>
+        <option value="未対応" ${issue.status === '未対応' || !issue.status ? 'selected' : ''}>未対応</option>
         <option value="対応中" ${issue.status === '対応中' ? 'selected' : ''}>対応中</option>
         <option value="完了" ${issue.status === '完了' ? 'selected' : ''}>完了</option>
       </select>`;
@@ -1065,7 +1113,6 @@ async function loadIssues(context) {
       html += `<div class="issue-feedback"><strong>対応:</strong> ${escapeHtml(issue.feedback)}</div>`;
     }
 
-    // 店責用のフィードバック入力
     if (context === 'manager') {
       html += `<div class="issue-feedback-input">
         <input type="text" class="form-control" placeholder="対応コメント..." value="${escapeHtml(issue.feedback || '')}" data-issue-id="${issue.id}" data-field="feedback">
@@ -1100,7 +1147,7 @@ async function onPostIssue(context) {
   const result = await api('/api/issues', {
     method: 'POST',
     body: JSON.stringify({
-      storeId: State.storeId,
+      storeCode: State.storeCode,
       reporter: State.displayName,
       content
     })
@@ -1119,7 +1166,6 @@ async function onIssueStatusChange(selectEl) {
   const issueId = selectEl.dataset.issueId;
   const status = selectEl.value;
 
-  // 同じissueのfeedback inputを取得
   const feedbackInput = document.querySelector(`input[data-issue-id="${issueId}"][data-field="feedback"]`);
   const feedback = feedbackInput ? feedbackInput.value : '';
 
