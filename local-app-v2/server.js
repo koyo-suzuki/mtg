@@ -24,7 +24,7 @@ function getBusinessDate() {
   const jst = new Date(now.getTime() + (9 * 60 * 60 * 1000));
   const hour = jst.getUTCHours();
 
-  if (hour < 11) {
+  if (hour < 5) {
     jst.setUTCDate(jst.getUTCDate() - 1);
   }
 
