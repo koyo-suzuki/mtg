@@ -328,11 +328,15 @@ app.put('/api/issues/:id', async (req, res) => {
 // サーバー起動
 // =====================================================
 
-app.listen(PORT, () => {
-  console.log('');
-  console.log('=================================');
-  console.log('  朝礼・終礼シート v2 (Production)');
-  console.log(`  http://localhost:${PORT}`);
-  console.log('=================================');
-  console.log('');
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log('');
+    console.log('=================================');
+    console.log('  朝礼・終礼シート v2 (Production)');
+    console.log(`  http://localhost:${PORT}`);
+    console.log('=================================');
+    console.log('');
+  });
+}
+
+module.exports = app;
