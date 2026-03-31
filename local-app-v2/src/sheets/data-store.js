@@ -3,6 +3,31 @@ const { getRows, appendRows, updateRange, clearRange } = require('./sheets-clien
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
 
 // =====================================================
+// In-memory cache (short TTL for operational data)
+// =====================================================
+
+const cache = {};
+const CACHE_TTL = 30 * 1000; // 30 seconds
+
+function getCached(key) {
+  const entry = cache[key];
+  if (entry && Date.now() - entry.time < CACHE_TTL) {
+    return entry.data;
+  }
+  return null;
+}
+
+function setCache(key, data) {
+  cache[key] = { data, time: Date.now() };
+}
+
+function invalidateCache(prefix) {
+  Object.keys(cache).forEach(k => {
+    if (k.startsWith(prefix)) delete cache[k];
+  });
+}
+
+// =====================================================
 // Helpers
 // =====================================================
 
@@ -10,27 +35,20 @@ function nowISO() {
   return new Date().toISOString();
 }
 
-/**
- * Find row indices matching a filter in a sheet.
- * Returns array of { index (0-based from data start), row }
- */
-function findRows(rows, filters) {
-  return rows
-    .map((row, index) => ({ index, row }))
-    .filter(({ row }) =>
-      Object.entries(filters).every(([colIdx, val]) => (row[colIdx] || '') === val)
-    );
+async function getChoreiRows() {
+  const cached = getCached('chorei_all');
+  if (cached) return cached;
+  const rows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L10000');
+  setCache('chorei_all', rows);
+  return rows;
 }
 
 // =====================================================
 // Chorei (朝礼)
 // =====================================================
 
-/**
- * Get chorei data for a specific date and store
- */
 async function getChoreiByDateStore(date, storeCode) {
-  const rows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L5000');
+  const rows = await getChoreiRows();
   return rows
     .filter(r => r[0] === date && r[1] === storeCode)
     .map(r => ({
@@ -50,8 +68,7 @@ async function getChoreiByDateStore(date, storeCode) {
  * Save chorei casts (replaces all entries for date+store)
  */
 async function saveChoreiCasts(date, storeCode, casts) {
-  // Read all rows to find and remove existing entries for this date+store
-  const allRows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L5000');
+  const allRows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L10000');
   const otherRows = allRows.filter(r => !(r[0] === date && r[1] === storeCode));
 
   const newRows = casts.map(c => [
@@ -71,39 +88,38 @@ async function saveChoreiCasts(date, storeCode, casts) {
 
   const allData = [...otherRows, ...newRows];
 
-  // Clear and rewrite (atomic-ish operation)
+  // Write all at once, then clear leftover rows if needed
+  const writes = [];
   if (allData.length > 0) {
-    await updateRange(DATA_SPREADSHEET_ID, `chorei!A2:L${allData.length + 1}`, allData);
-    // Clear any remaining old rows below
-    if (allRows.length > allData.length) {
-      await clearRange(DATA_SPREADSHEET_ID, `chorei!A${allData.length + 2}:L${allRows.length + 1}`);
-    }
-  } else {
-    await clearRange(DATA_SPREADSHEET_ID, 'chorei!A2:L5000');
+    writes.push(updateRange(DATA_SPREADSHEET_ID, `chorei!A2:L${allData.length + 1}`, allData));
   }
+  if (allRows.length > allData.length) {
+    writes.push(clearRange(DATA_SPREADSHEET_ID, `chorei!A${allData.length + 2}:L${allRows.length + 1}`));
+  }
+  await Promise.all(writes);
+
+  invalidateCache('chorei');
 }
 
 /**
  * Update a single cast's goal in chorei
  */
 async function saveCastGoal(date, storeCode, gmail, goalData) {
-  const allRows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L5000');
+  const allRows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L10000');
   const rowIndex = allRows.findIndex(r => r[0] === date && r[1] === storeCode && r[3] === gmail);
 
-  if (rowIndex === -1) {
-    return false;
-  }
+  if (rowIndex === -1) return false;
 
   const row = allRows[rowIndex];
-  // Update: expectedVisitors (col 6), castGoal (col 7), needsPickup (col 9), pickupDestination (col 10)
   row[6] = String(goalData.expectedVisitors || 0);
   row[7] = goalData.goal || '';
   row[9] = goalData.needsPickup ? '1' : '0';
   row[10] = goalData.pickupDestination || '';
   row[11] = nowISO();
 
-  const sheetRow = rowIndex + 2; // +2 because header is row 1, data starts at row 2
+  const sheetRow = rowIndex + 2;
   await updateRange(DATA_SPREADSHEET_ID, `chorei!A${sheetRow}:L${sheetRow}`, [row]);
+  invalidateCache('chorei');
   return true;
 }
 
@@ -111,7 +127,7 @@ async function saveCastGoal(date, storeCode, gmail, goalData) {
  * Get stores where a cast member is scheduled today
  */
 async function getCastStores(date, gmail) {
-  const rows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L5000');
+  const rows = await getChoreiRows();
   return rows
     .filter(r => r[0] === date && r[3] === gmail)
     .map(r => ({ storeCode: r[1] }));
@@ -121,7 +137,7 @@ async function getCastStores(date, gmail) {
  * Get pickup list for today (all stores)
  */
 async function getPickupList(date) {
-  const rows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L5000');
+  const rows = await getChoreiRows();
   return rows
     .filter(r => r[0] === date && (r[9] === '1' || r[9] === 'true'))
     .map(r => ({
@@ -136,13 +152,19 @@ async function getPickupList(date) {
 // =====================================================
 
 async function getShureiByDateStore(date, storeCode) {
+  const cacheKey = `shurei_${date}_${storeCode}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
   const rows = await getRows(DATA_SPREADSHEET_ID, 'shurei!A2:E5000');
   const row = rows.find(r => r[0] === date && r[1] === storeCode);
   if (!row) return null;
-  return {
+  const result = {
     salesToday: parseInt(row[2]) || 0,
     monthlySales: parseInt(row[3]) || 0,
   };
+  setCache(cacheKey, result);
+  return result;
 }
 
 async function saveShurei(date, storeCode, data) {
@@ -157,6 +179,7 @@ async function saveShurei(date, storeCode, data) {
   } else {
     await appendRows(DATA_SPREADSHEET_ID, 'shurei!A:E', [newRow]);
   }
+  invalidateCache('shurei');
 }
 
 // =====================================================
@@ -164,8 +187,12 @@ async function saveShurei(date, storeCode, data) {
 // =====================================================
 
 async function getSelfEvalByDateStore(date, storeCode) {
+  const cacheKey = `eval_${date}_${storeCode}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
   const rows = await getRows(DATA_SPREADSHEET_ID, 'self_evaluation!A2:H5000');
-  return rows
+  const result = rows
     .filter(r => r[0] === date && r[1] === storeCode)
     .map(r => ({
       castName: r[2] || '',
@@ -174,6 +201,8 @@ async function getSelfEvalByDateStore(date, storeCode) {
       comment: r[5] || '',
       isEarlyLeave: r[6] === '1' || r[6] === 'true',
     }));
+  setCache(cacheKey, result);
+  return result;
 }
 
 async function saveSelfEval(date, storeCode, gmail, castName, data) {
@@ -194,6 +223,7 @@ async function saveSelfEval(date, storeCode, gmail, castName, data) {
   } else {
     await appendRows(DATA_SPREADSHEET_ID, 'self_evaluation!A:H', [newRow]);
   }
+  invalidateCache('eval');
 }
 
 // =====================================================
@@ -201,8 +231,12 @@ async function saveSelfEval(date, storeCode, gmail, castName, data) {
 // =====================================================
 
 async function getIssuesByStore(storeCode) {
+  const cacheKey = `issues_${storeCode}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
   const rows = await getRows(DATA_SPREADSHEET_ID, 'issues!A2:I5000');
-  return rows
+  const result = rows
     .filter(r => r[2] === storeCode)
     .map(r => ({
       id: r[0] || '',
@@ -217,6 +251,8 @@ async function getIssuesByStore(storeCode) {
     }))
     .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
     .slice(0, 50);
+  setCache(cacheKey, result);
+  return result;
 }
 
 async function createIssue(date, storeCode, reporter, content) {
@@ -228,6 +264,7 @@ async function createIssue(date, storeCode, reporter, content) {
     newId, date, storeCode, reporter, content, '', '', '', nowISO(),
   ]]);
 
+  invalidateCache('issues');
   return newId;
 }
 
@@ -244,6 +281,7 @@ async function updateIssue(id, status, feedback) {
 
   const sheetRow = rowIndex + 2;
   await updateRange(DATA_SPREADSHEET_ID, `issues!A${sheetRow}:I${sheetRow}`, [row]);
+  invalidateCache('issues');
   return true;
 }
 
