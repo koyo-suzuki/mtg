@@ -127,11 +127,7 @@ function setupEvents() {
     }
   });
   document.getElementById('managerBack').addEventListener('click', () => {
-    if (State.role === 'cast_manager') {
-      showRoleSelectScreen();
-    } else {
-      showLogin();
-    }
+    showStoreSelection();
   });
   document.getElementById('saveChoreiBtn').addEventListener('click', onSaveChorei);
 
@@ -155,11 +151,7 @@ function setupEvents() {
 
   // キャスト画面
   document.getElementById('castBack').addEventListener('click', () => {
-    if (State.role === 'cast_manager') {
-      showRoleSelectScreen();
-    } else {
-      showLogin();
-    }
+    showStoreSelection();
   });
   document.getElementById('saveCastGoal').addEventListener('click', onSaveCastGoal);
 
