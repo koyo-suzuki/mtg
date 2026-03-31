@@ -21,13 +21,103 @@ const State = {
 };
 
 // =====================================================
+// セッション保持
+// =====================================================
+
+const SESSION_KEY = 'mtg_session';
+
+function saveSession(screen) {
+  const data = {
+    gmail: State.gmail,
+    displayName: State.displayName,
+    castName: State.castName,
+    role: State.role,
+    isManager: State.isManager,
+    storeCode: State.storeCode,
+    storeName: State.storeName,
+    businessDate: State.businessDate,
+    idToken: State.idToken,
+    screen: screen || 'login',
+  };
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
+}
+
+function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+function loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+// =====================================================
 // 初期化
 // =====================================================
 
 document.addEventListener('DOMContentLoaded', async () => {
   setupEvents();
-  await initGoogleSignIn();
+
+  // セッション復元を試みる
+  const session = loadSession();
+  if (session && session.idToken && session.gmail) {
+    // 状態を復元
+    State.idToken = session.idToken;
+    State.gmail = session.gmail;
+    State.displayName = session.displayName;
+    State.castName = session.castName;
+    State.role = session.role;
+    State.isManager = session.isManager;
+    State.storeCode = session.storeCode;
+    State.storeName = session.storeName;
+    State.businessDate = session.businessDate;
+
+    // 営業日を最新に更新
+    try {
+      const dateResult = await api('/api/business-date');
+      if (dateResult.success) State.businessDate = dateResult.date;
+    } catch (e) { /* ignore */ }
+
+    // 保存されていた画面を復元
+    try {
+      await restoreScreen(session.screen);
+    } catch (e) {
+      console.error('Session restore failed:', e);
+      clearSession();
+      await initGoogleSignIn();
+    }
+  } else {
+    await initGoogleSignIn();
+  }
 });
+
+async function restoreScreen(screen) {
+  switch (screen) {
+    case 'manager':
+      await showManagerScreen();
+      break;
+    case 'cast':
+      await showCastScreen();
+      break;
+    case 'admin':
+      await showAdminScreen();
+      break;
+    case 'storeSelect':
+      await showStoreSelection();
+      break;
+    case 'roleSelect':
+      showRoleSelectScreen();
+      break;
+    default:
+      clearSession();
+      await initGoogleSignIn();
+  }
+}
 
 async function initGoogleSignIn() {
   try {
@@ -202,6 +292,7 @@ async function api(endpoint, options = {}) {
   }
   const res = await fetch(endpoint, { ...options, headers });
   if (res.status === 401) {
+    clearSession();
     showLogin();
     return { success: false, error: 'セッションが切れました。再度ログインしてください。' };
   }
@@ -227,6 +318,7 @@ function showLogin() {
   State.storeCode = null;
   State.storeName = null;
   State.idToken = null;
+  clearSession();
   if (typeof google !== 'undefined' && google.accounts) {
     google.accounts.id.disableAutoSelect();
   }
@@ -236,6 +328,7 @@ function showRoleSelectScreen() {
   hideAllScreens();
   document.getElementById('roleSelectScreen').classList.remove('hidden');
   document.getElementById('roleSelectGreeting').textContent = `${State.displayName} さん`;
+  saveSession('roleSelect');
 }
 
 // =====================================================
@@ -277,6 +370,8 @@ async function showStoreSelection() {
     });
     container.appendChild(el);
   });
+
+  saveSession('storeSelect');
 }
 
 // =====================================================
@@ -296,6 +391,8 @@ async function showManagerScreen() {
   if (State.role === 'cast_manager') {
     autoAddSelf();
   }
+
+  saveSession('manager');
 }
 
 async function loadCastMaster() {
@@ -585,6 +682,8 @@ async function showCastScreen() {
   document.getElementById('castDate').textContent = State.businessDate;
 
   await loadCastData();
+
+  saveSession('cast');
 }
 
 async function loadCastData() {
@@ -707,6 +806,8 @@ async function showAdminScreen() {
     opt.textContent = store.name;
     select.appendChild(opt);
   });
+
+  saveSession('admin');
 }
 
 async function onAdminStoreSelect() {
