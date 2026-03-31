@@ -635,6 +635,9 @@ function renderChoreiCastList() {
 }
 
 async function onSaveChorei() {
+  const btn = document.getElementById('saveChoreiBtn');
+  startSaving(btn);
+
   const salesInputs = document.querySelectorAll('.chorei-monthly-sales');
   const drinksInputs = document.querySelectorAll('.chorei-monthly-drinks');
   const selfGoalInput = document.querySelector('.manager-self-goal');
@@ -660,6 +663,8 @@ async function onSaveChorei() {
     method: 'POST',
     body: JSON.stringify({ storeCode: State.storeCode, casts })
   });
+
+  stopSaving(btn);
 
   if (result.success) {
     await loadChoreiData();
@@ -742,6 +747,9 @@ function renderCastChoreiView(casts) {
 }
 
 async function onSaveCastGoal() {
+  const btn = document.getElementById('saveCastGoal');
+  startSaving(btn);
+
   const goal = document.getElementById('castGoalInput').value.trim();
   const expectedVisitors = parseInt(document.getElementById('castVisitorsInput').value) || 0;
   const needsPickup = document.getElementById('castPickupCheck').checked;
@@ -750,6 +758,8 @@ async function onSaveCastGoal() {
     method: 'POST',
     body: JSON.stringify({ storeCode: State.storeCode, gmail: State.gmail, goal, expectedVisitors, needsPickup, pickupDestination })
   });
+
+  stopSaving(btn);
 
   if (result.success) {
     await loadCastData();
@@ -867,6 +877,9 @@ async function loadShureiData() {
 }
 
 async function onSaveShurei() {
+  const btn = document.getElementById('saveShureiBtn');
+  startSaving(btn);
+
   const result = await api('/api/shurei', {
     method: 'POST',
     body: JSON.stringify({
@@ -875,6 +888,8 @@ async function onSaveShurei() {
       monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0
     })
   });
+
+  stopSaving(btn);
 
   showAlert('shureiAlert', result.success ? 'success' : 'error',
     result.success ? '保存しました' : (result.error || '保存できませんでした'));
@@ -938,6 +953,9 @@ async function onSaveEval() {
     return;
   }
 
+  const btn = document.getElementById('saveEvalBtn');
+  startSaving(btn);
+
   const result = await api('/api/self-evaluation', {
     method: 'POST',
     body: JSON.stringify({
@@ -949,6 +967,8 @@ async function onSaveEval() {
       isEarlyLeave: false
     })
   });
+
+  stopSaving(btn);
 
   showAlert('castEvalAlert', result.success ? 'success' : 'error',
     result.success ? '保存しました' : (result.error || '保存できませんでした'));
@@ -1034,6 +1054,9 @@ async function onSaveManagerEval() {
     return;
   }
 
+  const btn = document.getElementById('saveManagerEvalBtn');
+  startSaving(btn);
+
   const result = await api('/api/self-evaluation', {
     method: 'POST',
     body: JSON.stringify({
@@ -1045,6 +1068,8 @@ async function onSaveManagerEval() {
       isEarlyLeave: false
     })
   });
+
+  stopSaving(btn);
 
   showAlert('managerEvalAlert', result.success ? 'success' : 'error',
     result.success ? '保存しました' : (result.error || '保存できませんでした'));
@@ -1230,12 +1255,16 @@ function onIssueFilterClick(e) {
 async function onPostIssue(context) {
   const inputId = context === 'manager' ? 'managerIssueContent' : 'castIssueContent';
   const alertId = context === 'manager' ? 'managerIssuesAlert' : 'castIssuesAlert';
+  const btnId = context === 'manager' ? 'postManagerIssue' : 'postCastIssue';
   const content = document.getElementById(inputId).value.trim();
 
   if (!content) {
     showAlert(alertId, 'error', '内容を入力してください');
     return;
   }
+
+  const btn = document.getElementById(btnId);
+  startSaving(btn);
 
   const result = await api('/api/issues', {
     method: 'POST',
@@ -1245,6 +1274,8 @@ async function onPostIssue(context) {
       content
     })
   });
+
+  stopSaving(btn);
 
   if (result.success) {
     document.getElementById(inputId).value = '';
@@ -1315,4 +1346,21 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+// =====================================================
+// 保存中スピナー
+// =====================================================
+
+function startSaving(btn) {
+  if (!btn) return;
+  btn._originalHTML = btn.innerHTML;
+  btn.classList.add('is-saving');
+  btn.innerHTML = '<span class="spinner"></span>保存中...';
+}
+
+function stopSaving(btn) {
+  if (!btn || !btn._originalHTML) return;
+  btn.classList.remove('is-saving');
+  btn.innerHTML = btn._originalHTML;
 }

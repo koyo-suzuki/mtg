@@ -132,6 +132,23 @@ select.form-control { appearance: auto; }
   text-align: center;
 }
 .btn:active { transform: scale(0.97); }
+.btn.is-saving {
+  pointer-events: none;
+  opacity: 0.7;
+}
+.btn .spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2.5px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 6px;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 .btn-primary {
   background: var(--primary);
   color: #fff;
