@@ -579,7 +579,10 @@ function renderChoreiCastList() {
         <div class="col">
           <div class="form-group">
             <label>来店予定</label>
-            <div class="cast-visitors-display">${cast.expectedVisitors || 0}組</div>
+            ${isSelf
+              ? `<input type="number" class="form-control chorei-self-visitors" data-index="${i}" value="${cast.expectedVisitors || 0}" min="0">`
+              : `<div class="cast-visitors-display">${cast.expectedVisitors || 0}組</div>`
+            }
           </div>
         </div>
       </div>
@@ -640,6 +643,7 @@ async function onSaveChorei() {
 
   const salesInputs = document.querySelectorAll('.chorei-monthly-sales');
   const drinksInputs = document.querySelectorAll('.chorei-monthly-drinks');
+  const selfVisitorsInput = document.querySelector('.chorei-self-visitors');
   const selfGoalInput = document.querySelector('.manager-self-goal');
   const selfPickupCheck = document.querySelector('.manager-self-pickup-check');
   const selfPickupInput = document.querySelector('.manager-self-pickup-input');
@@ -651,7 +655,7 @@ async function onSaveChorei() {
       gmail: cast.gmail,
       monthlySales: parseInt(salesInputs[i]?.value) || 0,
       monthlyDrinks: parseInt(drinksInputs[i]?.value) || 0,
-      expectedVisitors: cast.expectedVisitors || 0,
+      expectedVisitors: isSelf && selfVisitorsInput ? (parseInt(selfVisitorsInput.value) || 0) : (cast.expectedVisitors || 0),
       managerMemo: '',
       castGoal: isSelf && selfGoalInput ? selfGoalInput.value.trim() : (cast.castGoal || ''),
       needsPickup: isSelf && selfPickupCheck ? selfPickupCheck.checked : (cast.needsPickup || false),
