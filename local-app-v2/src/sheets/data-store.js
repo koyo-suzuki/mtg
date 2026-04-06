@@ -1,4 +1,4 @@
-const { getRows, appendRows, updateRange, clearRange } = require('./sheets-client');
+const { getRows, appendRows, updateRange, clearRange, batchGet } = require('./sheets-client');
 
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
 
@@ -108,7 +108,22 @@ async function saveCastGoal(date, storeCode, gmail, goalData) {
   const allRows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L10000');
   const rowIndex = allRows.findIndex(r => r[0] === date && r[1] === storeCode && r[3] === gmail);
 
-  if (rowIndex === -1) return false;
+  if (rowIndex === -1) {
+    // 朝礼に未追加 → 自分の行を自動作成
+    const newRow = [
+      date, storeCode, goalData.castName || '', gmail,
+      '0', '0',
+      String(goalData.expectedVisitors || 0),
+      goalData.goal || '',
+      '',
+      goalData.needsPickup ? '1' : '0',
+      goalData.pickupDestination || '',
+      nowISO(),
+    ];
+    await appendRows(DATA_SPREADSHEET_ID, 'chorei!A:L', [newRow]);
+    invalidateCache('chorei');
+    return true;
+  }
 
   const row = allRows[rowIndex];
   row[6] = String(goalData.expectedVisitors || 0);
@@ -285,9 +300,105 @@ async function updateIssue(id, status, feedback) {
   return true;
 }
 
+// =====================================================
+// Dashboard (ダッシュボード)
+// =====================================================
+
+const dashboardCache = {};
+const DASH_CACHE_TTL = 5 * 60 * 1000;           // 5 min (includes today)
+const DASH_HISTORICAL_CACHE_TTL = 30 * 60 * 1000; // 30 min (past-only ranges)
+
+function getDashCached(key, toDate) {
+  const entry = dashboardCache[key];
+  if (!entry) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const ttl = toDate < today ? DASH_HISTORICAL_CACHE_TTL : DASH_CACHE_TTL;
+  if (Date.now() - entry.time < ttl) return entry.data;
+  return null;
+}
+
+function setDashCache(key, data) {
+  dashboardCache[key] = { data, time: Date.now() };
+}
+
+async function getDashboardSummary(from, to, storeCode) {
+  const cacheKey = `dash_${from}_${to}_${storeCode}`;
+  const cached = getDashCached(cacheKey, to);
+  if (cached) return cached;
+
+  const ranges = [
+    'shurei!A2:E5000',
+    'chorei!A2:L10000',
+    'self_evaluation!A2:H5000',
+    'issues!A2:I5000',
+  ];
+  const results = await batchGet(DATA_SPREADSHEET_ID, ranges);
+
+  const inRange = (d) => d >= from && d <= to;
+  const matchStore = (s) => storeCode === 'all' || s === storeCode;
+
+  // Sales (shurei)
+  const sales = (results[0].values || [])
+    .filter(r => inRange(r[0]) && matchStore(r[1]))
+    .map(r => ({
+      date: r[0],
+      storeCode: r[1],
+      salesToday: parseInt(r[2]) || 0,
+      monthlySales: parseInt(r[3]) || 0,
+    }));
+
+  // Attendance (chorei)
+  const attendance = (results[1].values || [])
+    .filter(r => inRange(r[0]) && matchStore(r[1]))
+    .map(r => ({
+      date: r[0],
+      storeCode: r[1],
+      castName: r[2] || '',
+      gmail: r[3] || '',
+      monthlySales: parseInt(r[4]) || 0,
+      monthlyDrinks: parseInt(r[5]) || 0,
+      expectedVisitors: parseInt(r[6]) || 0,
+      castGoal: r[7] || '',
+      needsPickup: r[9] === '1' || r[9] === 'true',
+    }));
+
+  // Evaluations (self_evaluation)
+  const evaluations = (results[2].values || [])
+    .filter(r => inRange(r[0]) && matchStore(r[1]))
+    .map(r => ({
+      date: r[0],
+      storeCode: r[1],
+      castName: r[2] || '',
+      gmail: r[3] || '',
+      score: parseInt(r[4]) || 0,
+      comment: r[5] || '',
+      isEarlyLeave: r[6] === '1' || r[6] === 'true',
+    }));
+
+  // Issues
+  const issues = (results[3].values || [])
+    .filter(r => inRange(r[1]) && matchStore(r[2]))
+    .map(r => ({
+      id: r[0] || '',
+      date: r[1] || '',
+      storeCode: r[2] || '',
+      reporter: r[3] || '',
+      content: r[4] || '',
+      status: r[5] || '',
+      feedback: r[6] || '',
+      completedAt: r[7] || '',
+      createdAt: r[8] || '',
+    }));
+
+  const data = { sales, attendance, evaluations, issues };
+  setDashCache(cacheKey, data);
+  return data;
+}
+
 module.exports = {
   getChoreiByDateStore, saveChoreiCasts, saveCastGoal, getCastStores, getPickupList,
   getShureiByDateStore, saveShurei,
   getSelfEvalByDateStore, saveSelfEval,
   getIssuesByStore, createIssue, updateIssue,
+  getDashboardSummary,
 };

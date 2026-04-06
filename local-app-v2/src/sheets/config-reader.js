@@ -49,14 +49,8 @@ async function getUserByEmail(email) {
   const user = users.find(u => u.email === email.toLowerCase().trim());
   if (!user) return null;
 
-  let appRole;
-  if (user.role === 'cast') {
-    appRole = 'cast';
-  } else if (user.role === 'cast_manager') {
-    appRole = 'cast_manager';
-  } else {
-    appRole = 'admin';
-  }
+  // ロールをそのまま保持（cast, cast_manager, senior_manager, manager, executive 等）
+  const appRole = user.role || 'cast';
 
   return {
     email: user.email,
@@ -72,7 +66,7 @@ async function getUserByEmail(email) {
 async function getCastMembers() {
   const users = await getAllUsers();
   return users
-    .filter(u => u.role === 'cast' || u.role === 'cast_manager')
+    .filter(u => u.castName) // castNameがあるユーザーは全員追加可能
     .map(u => ({
       gmail: u.email,
       castName: u.castName,

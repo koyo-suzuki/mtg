@@ -155,12 +155,12 @@ app.get('/api/chorei/:storeCode', async (req, res) => {
  * キャスト目標保存
  */
 app.post('/api/cast-goal', async (req, res) => {
-  const { storeCode, gmail, goal, expectedVisitors, needsPickup, pickupDestination } = req.body;
+  const { storeCode, gmail, goal, expectedVisitors, needsPickup, pickupDestination, castName } = req.body;
   const date = getBusinessDate();
 
   try {
     const updated = await dataStore.saveCastGoal(date, storeCode, gmail, {
-      goal, expectedVisitors, needsPickup, pickupDestination,
+      goal, expectedVisitors, needsPickup, pickupDestination, castName,
     });
     if (updated) {
       res.json({ success: true });
@@ -168,6 +168,7 @@ app.post('/api/cast-goal', async (req, res) => {
       res.json({ success: false, error: '朝礼にまだ追加されていません' });
     }
   } catch (error) {
+    console.error('Cast goal save error:', error);
     res.json({ success: false, error: error.message });
   }
 });
@@ -320,6 +321,31 @@ app.put('/api/issues/:id', async (req, res) => {
       res.json({ success: false, error: '伝言が見つかりません' });
     }
   } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// ダッシュボードAPI
+// =====================================================
+
+const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive'];
+
+app.get('/api/dashboard/summary', async (req, res) => {
+  if (!DASHBOARD_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+
+  const { storeCode, from, to } = req.query;
+  if (!storeCode || !from || !to) {
+    return res.json({ success: false, error: 'パラメータが不足しています' });
+  }
+
+  try {
+    const data = await dataStore.getDashboardSummary(from, to, storeCode);
+    res.json({ success: true, ...data });
+  } catch (error) {
+    console.error('Dashboard error:', error);
     res.json({ success: false, error: error.message });
   }
 });

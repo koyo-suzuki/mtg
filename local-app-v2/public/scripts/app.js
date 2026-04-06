@@ -18,7 +18,21 @@ const State = {
   issueFilter: 'all',
   idToken: null,    // Google ID Token
   googleClientId: null,
+  // Dashboard
+  dashStoreCode: null,
+  dashDateRange: '7',  // preset name
+  dashDateFrom: null,
+  dashDateTo: null,
+  dashData: null,
+  dashCharts: {},
 };
+
+// =====================================================
+// ロール定義
+// =====================================================
+
+const HQ_ROLES = ['senior_manager', 'manager', 'executive'];       // 本部系（店責代行可能）
+const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive']; // ダッシュボード閲覧可能
 
 // =====================================================
 // セッション保持
@@ -38,6 +52,8 @@ function saveSession(screen) {
     businessDate: State.businessDate,
     idToken: State.idToken,
     screen: screen || 'login',
+    dashStoreCode: State.dashStoreCode,
+    dashDateRange: State.dashDateRange,
   };
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
 }
@@ -60,6 +76,12 @@ function loadSession() {
 // 初期化
 // =====================================================
 
+// ページ離脱時に未保存のdebounceをflush
+window.addEventListener('beforeunload', () => flushAllAutoSaves());
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushAllAutoSaves();
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
   setupEvents();
 
@@ -76,6 +98,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     State.storeCode = session.storeCode;
     State.storeName = session.storeName;
     State.businessDate = session.businessDate;
+    State.dashStoreCode = session.dashStoreCode || null;
+    State.dashDateRange = session.dashDateRange || '7';
 
     // 営業日を最新に更新
     try {
@@ -106,6 +130,9 @@ async function restoreScreen(screen) {
       break;
     case 'admin':
       await showAdminScreen();
+      break;
+    case 'dashboard':
+      await showDashboardScreen();
       break;
     case 'storeSelect':
       await showStoreSelection();
@@ -182,7 +209,7 @@ async function handleGoogleCredentialResponse(response) {
     const dateResult = await api('/api/business-date');
     State.businessDate = dateResult.date;
 
-    if (result.role === 'admin') {
+    if (HQ_ROLES.includes(result.role)) {
       await showAdminScreen();
     } else if (result.role === 'cast_manager') {
       showRoleSelectScreen();
@@ -219,7 +246,6 @@ function setupEvents() {
   document.getElementById('managerBack').addEventListener('click', () => {
     showStoreSelection();
   });
-  document.getElementById('saveChoreiBtn').addEventListener('click', onSaveChorei);
 
   // キャスト検索
   document.getElementById('castSearchInput').addEventListener('input', onCastSearch);
@@ -230,8 +256,9 @@ function setupEvents() {
     }
   });
 
-  // 終礼
-  document.getElementById('saveShureiBtn').addEventListener('click', onSaveShurei);
+  // 終礼（自動保存）
+  document.getElementById('shureiSalesTotal').addEventListener('input', autoSaveShurei);
+  document.getElementById('shureiMonthlySales').addEventListener('input', autoSaveShurei);
 
   // 店責伝言板
   document.getElementById('postManagerIssue').addEventListener('click', () => onPostIssue('manager'));
@@ -243,7 +270,11 @@ function setupEvents() {
   document.getElementById('castBack').addEventListener('click', () => {
     showStoreSelection();
   });
-  document.getElementById('saveCastGoal').addEventListener('click', onSaveCastGoal);
+  // キャスト目標（自動保存）
+  document.getElementById('castGoalInput').addEventListener('input', autoSaveCastGoal);
+  document.getElementById('castVisitorsInput').addEventListener('input', autoSaveCastGoal);
+  document.getElementById('castPickupCheck').addEventListener('change', autoSaveCastGoal);
+  document.getElementById('castPickupDest').addEventListener('input', autoSaveCastGoal);
 
   // キャスト送迎トグル
   document.getElementById('castPickupCheck').addEventListener('change', (e) => {
@@ -259,16 +290,45 @@ function setupEvents() {
   // 送迎コピー
   document.getElementById('copyPickupBtn').addEventListener('click', onCopyPickup);
 
-  // キャスト振り返り
-  document.getElementById('saveEvalBtn').addEventListener('click', onSaveEval);
-  document.querySelectorAll('.score-btn').forEach(btn => {
-    btn.addEventListener('click', onScoreSelect);
+  // キャスト振り返り（自動保存）
+  document.getElementById('evalComment').addEventListener('input', autoSaveCastEval);
+  document.querySelectorAll('#scoreSelector .score-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      onScoreSelect(e);
+      doSaveCastEval(); // スコア選択時は即保存
+    });
   });
 
-  // 店責振り返り
-  document.getElementById('saveManagerEvalBtn').addEventListener('click', onSaveManagerEval);
+  // 店責振り返り（自動保存）
+  document.getElementById('managerEvalComment').addEventListener('input', autoSaveManagerEval);
   document.querySelectorAll('.manager-score-btn').forEach(btn => {
-    btn.addEventListener('click', onManagerScoreSelect);
+    btn.addEventListener('click', (e) => {
+      onManagerScoreSelect(e);
+      doSaveManagerEval(); // スコア選択時は即保存
+    });
+  });
+
+  // ダッシュボード導線（本部画面から）
+  document.getElementById('adminDashboard').addEventListener('click', () => showDashboardScreen());
+  document.getElementById('dashBack').addEventListener('click', () => {
+    // Destroy charts on leave
+    Object.values(State.dashCharts).forEach(c => c.destroy());
+    State.dashCharts = {};
+    if (HQ_ROLES.includes(State.role)) showAdminScreen();
+    else showRoleSelectScreen();
+  });
+  document.getElementById('dashStoreSelect').addEventListener('change', (e) => {
+    State.dashStoreCode = e.target.value;
+    loadDashboardData();
+  });
+  document.querySelectorAll('.dash-date-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.dash-date-btn').forEach(b => b.classList.remove('active'));
+      e.currentTarget.classList.add('active');
+      State.dashDateRange = e.currentTarget.dataset.range;
+      computeDashDates();
+      loadDashboardData();
+    });
   });
 
   // 専任画面
@@ -485,6 +545,7 @@ function addCastToChorei(masterCast) {
   });
 
   renderChoreiCastList();
+  doSaveChorei(); // キャスト追加時は即保存
 }
 
 // ---- 朝礼データ ----
@@ -597,6 +658,7 @@ function renderChoreiCastList() {
       const idx = parseInt(e.target.dataset.remove);
       State.choreiCasts.splice(idx, 1);
       renderChoreiCastList();
+      doSaveChorei(); // キャスト削除時は即保存
     });
   });
 
@@ -634,6 +696,14 @@ function renderChoreiCastList() {
         showAlert('choreiAlert', 'error', '検索に失敗しました');
       }
     });
+  });
+
+  // 朝礼入力フィールドに自動保存リスナー（動的要素なのでここで設定）
+  container.querySelectorAll('.chorei-monthly-sales, .chorei-monthly-drinks, .chorei-self-visitors, .manager-self-goal, .manager-self-pickup-input').forEach(input => {
+    input.addEventListener('input', autoSaveChorei);
+  });
+  container.querySelectorAll('.manager-self-pickup-check').forEach(cb => {
+    cb.addEventListener('change', autoSaveChorei);
   });
 }
 
@@ -709,15 +779,7 @@ async function loadCastData() {
   }
 
   const castGoalAlert = document.getElementById('castGoalAlert');
-  if (!myData) {
-    castGoalAlert.className = 'alert alert-info';
-    castGoalAlert.textContent = 'この店舗の朝礼にまだ追加されていません。店責に確認してね。';
-    castGoalAlert.classList.remove('hidden');
-    document.getElementById('saveCastGoal').disabled = true;
-  } else {
-    castGoalAlert.classList.add('hidden');
-    document.getElementById('saveCastGoal').disabled = false;
-  }
+  castGoalAlert.classList.add('hidden');
 
   renderCastChoreiView(result.casts);
 }
@@ -841,7 +903,16 @@ async function onAdminStoreSelect() {
 // タブ切り替え
 // =====================================================
 
+function flushAllAutoSaves() {
+  autoSaveChorei.flush();
+  autoSaveShurei.flush();
+  autoSaveCastGoal.flush();
+  autoSaveCastEval.flush();
+  autoSaveManagerEval.flush();
+}
+
 function onTabChange(e) {
+  flushAllAutoSaves();
   const tab = e.currentTarget;
   const tabName = tab.dataset.tab;
   if (!tabName) return;
@@ -864,6 +935,11 @@ function onTabChange(e) {
   if (tabName === 'castShureiView') loadCastShureiView();
   if (tabName === 'castEval') loadCastEvalData();
   if (tabName === 'castIssues') loadIssues('cast');
+  // Dashboard tabs
+  if (tabName === 'dashSales') renderDashSalesTab();
+  if (tabName === 'dashAttendance') renderDashAttendanceTab();
+  if (tabName === 'dashCast') renderDashCastTab();
+  if (tabName === 'dashIssues') renderDashIssuesTab();
 }
 
 // =====================================================
@@ -1303,6 +1379,576 @@ async function onIssueStatusChange(selectEl) {
   });
 
   await loadIssues('manager');
+}
+
+// =====================================================
+// ダッシュボード
+// =====================================================
+
+function computeDashDates() {
+  const today = State.businessDate || new Date().toISOString().slice(0, 10);
+  State.dashDateTo = today;
+  if (State.dashDateRange === 'all') {
+    State.dashDateFrom = '2020-01-01';
+  } else {
+    const days = parseInt(State.dashDateRange) || 7;
+    const d = new Date(today);
+    d.setDate(d.getDate() - days + 1);
+    State.dashDateFrom = d.toISOString().slice(0, 10);
+  }
+}
+
+async function showDashboardScreen() {
+  hideAllScreens();
+  document.getElementById('dashboardScreen').classList.remove('hidden');
+
+  // Load stores for selector
+  const result = await api('/api/stores');
+  if (!result.success) return;
+
+  const select = document.getElementById('dashStoreSelect');
+  select.innerHTML = '<option value="all">全店舗</option>';
+  result.stores.forEach(store => {
+    const opt = document.createElement('option');
+    opt.value = store.code;
+    opt.textContent = store.name;
+    select.appendChild(opt);
+  });
+
+  // Restore or default store selection
+  if (State.dashStoreCode) {
+    select.value = State.dashStoreCode;
+  } else if (State.role === 'cast_manager' && State.storeCode) {
+    State.dashStoreCode = State.storeCode;
+    select.value = State.storeCode;
+  } else {
+    State.dashStoreCode = 'all';
+  }
+
+  // Restore date range preset button
+  document.querySelectorAll('.dash-date-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.range === State.dashDateRange);
+  });
+
+  computeDashDates();
+  await loadDashboardData();
+  saveSession('dashboard');
+}
+
+async function loadDashboardData() {
+  const loading = document.getElementById('dashLoading');
+  const tabs = document.getElementById('dashTabs');
+  loading.classList.remove('hidden');
+  tabs.style.opacity = '0.5';
+
+  const params = new URLSearchParams({
+    storeCode: State.dashStoreCode || 'all',
+    from: State.dashDateFrom,
+    to: State.dashDateTo,
+  });
+
+  const result = await api(`/api/dashboard/summary?${params}`);
+  loading.classList.add('hidden');
+  tabs.style.opacity = '1';
+
+  if (!result.success) {
+    showToast('error', result.error || 'データ取得に失敗しました');
+    return;
+  }
+
+  State.dashData = result;
+  renderActiveDashTab();
+  saveSession('dashboard');
+}
+
+function renderActiveDashTab() {
+  const active = document.querySelector('#dashTabs .tab.active');
+  if (!active) return;
+  const name = active.dataset.tab;
+  if (name === 'dashSales') renderDashSalesTab();
+  else if (name === 'dashAttendance') renderDashAttendanceTab();
+  else if (name === 'dashCast') renderDashCastTab();
+  else if (name === 'dashIssues') renderDashIssuesTab();
+}
+
+// ---- Chart helper ----
+
+const DASH_COLORS = ['#6C5CE7', '#00B894', '#E17055', '#FDCB6E', '#0984E3', '#D63031', '#A29BFE', '#55EFC4'];
+
+function getOrCreateChart(canvasId, config) {
+  if (State.dashCharts[canvasId]) {
+    const chart = State.dashCharts[canvasId];
+    chart.data = config.data;
+    if (config.options) chart.options = config.options;
+    chart.update();
+    return chart;
+  }
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return null;
+  const chart = new Chart(ctx, config);
+  State.dashCharts[canvasId] = chart;
+  return chart;
+}
+
+function fmtYen(n) {
+  return '\u00a5' + (n || 0).toLocaleString();
+}
+
+// ---- Sales Tab ----
+
+function renderDashSalesTab() {
+  const data = State.dashData;
+  if (!data) return;
+
+  // Aggregate sales by date
+  const byDate = {};
+  data.sales.forEach(s => {
+    if (!byDate[s.date]) byDate[s.date] = 0;
+    byDate[s.date] += s.salesToday;
+  });
+  const dates = Object.keys(byDate).sort();
+  const values = dates.map(d => byDate[d]);
+
+  // Metrics
+  const totalSales = values.reduce((a, b) => a + b, 0);
+  const latestMonthlySales = data.sales.length > 0
+    ? data.sales.reduce((best, s) => s.date > best.date ? s : best, data.sales[0]).monthlySales
+    : 0;
+  const avgDaily = dates.length > 0 ? Math.round(totalSales / dates.length) : 0;
+
+  document.getElementById('dashSalesMetrics').innerHTML = `
+    <div class="dash-metric">
+      <div class="dash-metric-label">期間合計</div>
+      <div class="dash-metric-value">${fmtYen(totalSales)}</div>
+      <div class="dash-metric-sub">${dates.length}日分</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">日平均</div>
+      <div class="dash-metric-value">${fmtYen(avgDaily)}</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">最新月次累計</div>
+      <div class="dash-metric-value">${fmtYen(latestMonthlySales)}</div>
+    </div>
+  `;
+
+  // Line chart
+  const labels = dates.map(d => d.slice(5)); // MM-DD
+  getOrCreateChart('dashSalesChart', {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: '日次売上',
+        data: values,
+        borderColor: '#6C5CE7',
+        backgroundColor: 'rgba(108,92,231,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: dates.length > 30 ? 0 : 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { callback: v => fmtYen(v) } },
+      },
+    },
+  });
+}
+
+// ---- Attendance Tab ----
+
+function renderDashAttendanceTab() {
+  const data = State.dashData;
+  if (!data) return;
+
+  // Count by date
+  const byDate = {};
+  const earlyByDate = {};
+  data.attendance.forEach(a => {
+    byDate[a.date] = (byDate[a.date] || 0) + 1;
+  });
+  data.evaluations.forEach(e => {
+    if (e.isEarlyLeave) earlyByDate[e.date] = (earlyByDate[e.date] || 0) + 1;
+  });
+  const dates = Object.keys(byDate).sort();
+  const counts = dates.map(d => byDate[d]);
+  const totalDays = dates.length;
+  const avgCount = totalDays > 0 ? (counts.reduce((a, b) => a + b, 0) / totalDays).toFixed(1) : 0;
+  const totalEarly = Object.values(earlyByDate).reduce((a, b) => a + b, 0);
+
+  document.getElementById('dashAttendanceMetrics').innerHTML = `
+    <div class="dash-metric">
+      <div class="dash-metric-label">平均出勤人数</div>
+      <div class="dash-metric-value">${avgCount}人</div>
+      <div class="dash-metric-sub">${totalDays}日分</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">早退数</div>
+      <div class="dash-metric-value">${totalEarly}件</div>
+    </div>
+  `;
+
+  // Bar chart
+  getOrCreateChart('dashAttendanceChart', {
+    type: 'bar',
+    data: {
+      labels: dates.map(d => d.slice(5)),
+      datasets: [{
+        label: '出勤人数',
+        data: counts,
+        backgroundColor: '#00B894',
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+    },
+  });
+
+  // Attendance table (recent 14 days max)
+  const recentDates = dates.slice(-14).reverse();
+  const tableContainer = document.getElementById('dashAttendanceTable');
+  if (recentDates.length === 0) {
+    tableContainer.innerHTML = '<p class="text-muted">データがありません</p>';
+    return;
+  }
+
+  let html = '<div class="table-wrapper"><table class="table"><thead><tr><th>日付</th><th>人数</th><th>キャスト</th></tr></thead><tbody>';
+  recentDates.forEach(date => {
+    const casts = data.attendance.filter(a => a.date === date).map(a => escapeHtml(a.castName));
+    html += `<tr><td>${date.slice(5)}</td><td>${casts.length}</td><td>${casts.join(', ')}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  tableContainer.innerHTML = html;
+}
+
+// ---- Cast Tab ----
+
+function renderDashCastTab() {
+  const data = State.dashData;
+  if (!data) return;
+
+  // Aggregate per cast
+  const castMap = {};
+  data.attendance.forEach(a => {
+    if (!castMap[a.gmail]) castMap[a.gmail] = { name: a.castName, gmail: a.gmail, days: 0, visitors: 0, latestSales: 0, latestDrinks: 0, latestDate: '', scores: [], details: [] };
+    castMap[a.gmail].days++;
+    castMap[a.gmail].visitors += a.expectedVisitors;
+    // 最新日付の売上・ドリンクを保持
+    if (a.date >= castMap[a.gmail].latestDate) {
+      castMap[a.gmail].latestDate = a.date;
+      castMap[a.gmail].latestSales = a.monthlySales || 0;
+      castMap[a.gmail].latestDrinks = a.monthlyDrinks || 0;
+    }
+  });
+  data.evaluations.forEach(e => {
+    if (!castMap[e.gmail]) castMap[e.gmail] = { name: e.castName, gmail: e.gmail, days: 0, visitors: 0, latestSales: 0, latestDrinks: 0, latestDate: '', scores: [], details: [] };
+    castMap[e.gmail].scores.push(e.score);
+    castMap[e.gmail].details.push({ date: e.date, score: e.score, comment: e.comment, isEarlyLeave: e.isEarlyLeave });
+  });
+
+  const casts = Object.values(castMap).sort((a, b) => b.days - a.days);
+  const container = document.getElementById('dashCastSummary');
+
+  if (casts.length === 0) {
+    container.innerHTML = '<p class="text-muted">データがありません</p>';
+    return;
+  }
+
+  let html = '';
+  casts.forEach((cast, i) => {
+    const avgScore = cast.scores.length > 0
+      ? (cast.scores.reduce((a, b) => a + b, 0) / cast.scores.length).toFixed(1)
+      : '-';
+
+    let detailHtml = '';
+    if (cast.details.length > 0) {
+      detailHtml = '<div class="table-wrapper"><table class="table"><thead><tr><th>日付</th><th>スコア</th><th>コメント</th></tr></thead><tbody>';
+      cast.details.sort((a, b) => b.date.localeCompare(a.date)).forEach(d => {
+        const earlyBadge = d.isEarlyLeave ? ' <span class="badge badge-pickup" style="background:var(--danger-bg);color:var(--danger);">早退</span>' : '';
+        detailHtml += `<tr><td>${d.date.slice(5)}</td><td>${d.score}点${earlyBadge}</td><td>${escapeHtml(d.comment) || '<span class="text-muted">-</span>'}</td></tr>`;
+      });
+      detailHtml += '</tbody></table></div>';
+    } else {
+      detailHtml = '<p class="text-muted" style="padding:8px 0;">評価データなし</p>';
+    }
+
+    html += `
+      <div class="dash-cast-row">
+        <div class="dash-cast-header" data-cast-idx="${i}">
+          <span class="dash-cast-name">${escapeHtml(cast.name)}</span>
+          <div class="dash-cast-stats">
+            <span>売上<span class="dash-cast-stat-val">${fmtYen(cast.latestSales)}</span></span>
+            <span>🍸<span class="dash-cast-stat-val">${cast.latestDrinks}</span></span>
+            <span><span class="dash-cast-stat-val">${cast.days}</span>日</span>
+            <span>評価<span class="dash-cast-stat-val">${avgScore}</span></span>
+          </div>
+        </div>
+        <div class="dash-cast-detail" id="dashCastDetail${i}">${detailHtml}</div>
+      </div>`;
+  });
+
+  container.innerHTML = html;
+
+  // Toggle expand
+  container.querySelectorAll('.dash-cast-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const idx = header.dataset.castIdx;
+      const detail = document.getElementById('dashCastDetail' + idx);
+      detail.classList.toggle('expanded');
+    });
+  });
+
+  // Score trend chart
+  const scoreByDate = {};
+  const scoreCounts = {};
+  data.evaluations.forEach(e => {
+    if (!scoreByDate[e.date]) { scoreByDate[e.date] = 0; scoreCounts[e.date] = 0; }
+    scoreByDate[e.date] += e.score;
+    scoreCounts[e.date]++;
+  });
+  const scoreDates = Object.keys(scoreByDate).sort();
+  const avgScores = scoreDates.map(d => +(scoreByDate[d] / scoreCounts[d]).toFixed(1));
+
+  getOrCreateChart('dashScoreChart', {
+    type: 'line',
+    data: {
+      labels: scoreDates.map(d => d.slice(5)),
+      datasets: [{
+        label: '平均スコア',
+        data: avgScores,
+        borderColor: '#6C5CE7',
+        backgroundColor: 'rgba(108,92,231,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: scoreDates.length > 30 ? 0 : 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { min: 0, max: 10, ticks: { stepSize: 1 } } },
+    },
+  });
+}
+
+// ---- Issues Tab ----
+
+function renderDashIssuesTab() {
+  const data = State.dashData;
+  if (!data) return;
+
+  const issues = data.issues;
+  const open = issues.filter(i => !i.status || i.status === '未対応').length;
+  const progress = issues.filter(i => i.status === '対応中').length;
+  const done = issues.filter(i => i.status === '完了').length;
+
+  document.getElementById('dashIssuesMetrics').innerHTML = `
+    <div class="dash-metric">
+      <div class="dash-metric-label">未対応</div>
+      <div class="dash-metric-value dash-metric-down">${open}</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">対応中</div>
+      <div class="dash-metric-value" style="color:var(--warning)">${progress}</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">完了</div>
+      <div class="dash-metric-value dash-metric-up">${done}</div>
+    </div>
+  `;
+
+  // Donut chart
+  getOrCreateChart('dashIssueDonutChart', {
+    type: 'doughnut',
+    data: {
+      labels: ['未対応', '対応中', '完了'],
+      datasets: [{
+        data: [open, progress, done],
+        backgroundColor: ['#E17055', '#FDCB6E', '#00B894'],
+        borderWidth: 0,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 12 } } } },
+    },
+  });
+
+  // Issue list (recent 20)
+  const listContainer = document.getElementById('dashIssuesList');
+  const sorted = [...issues].sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date)).slice(0, 20);
+
+  if (sorted.length === 0) {
+    listContainer.innerHTML = '<p class="text-muted">投稿がありません</p>';
+    return;
+  }
+
+  let html = '';
+  sorted.forEach(issue => {
+    const statusClass = issue.status === '完了' ? 'status-done'
+      : issue.status === '対応中' ? 'status-progress' : 'status-pending';
+    html += `<div class="issue-item">
+      <div class="issue-item-header">
+        <span class="issue-item-reporter">${escapeHtml(issue.reporter)}</span>
+        <span class="issue-item-date">${issue.date}</span>
+      </div>
+      <div class="issue-item-content">${escapeHtml(issue.content)}</div>
+      <div class="issue-item-footer">
+        <span class="issue-status ${statusClass}">${escapeHtml(issue.status || '未対応')}</span>
+      </div>
+      ${issue.feedback ? `<div class="issue-feedback"><strong>対応:</strong> ${escapeHtml(issue.feedback)}</div>` : ''}
+    </div>`;
+  });
+
+  listContainer.innerHTML = html;
+}
+
+// =====================================================
+// 自動保存
+// =====================================================
+
+function debounce(fn, delay) {
+  let timer;
+  const debounced = function (...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; fn.apply(this, args); }, delay);
+  };
+  debounced.flush = function () {
+    if (timer) { clearTimeout(timer); timer = null; fn(); }
+  };
+  return debounced;
+}
+
+function showAutoSaveStatus(elementId, status) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.classList.remove('hidden', 'autosave-saving', 'autosave-saved', 'autosave-error');
+  if (status === 'saving') {
+    el.className = 'autosave-status autosave-saving';
+    el.textContent = '保存中...';
+  } else if (status === 'saved') {
+    el.className = 'autosave-status autosave-saved';
+    el.textContent = '保存済み';
+    setTimeout(() => el.classList.add('hidden'), 2000);
+  } else if (status === 'error') {
+    el.className = 'autosave-status autosave-error';
+    el.textContent = '保存に失敗しました';
+    setTimeout(() => el.classList.add('hidden'), 3000);
+  }
+}
+
+// Debounced auto-save functions
+const autoSaveChorei = debounce(() => doSaveChorei(), 1000);
+const autoSaveShurei = debounce(() => doSaveShurei(), 1000);
+const autoSaveCastGoal = debounce(() => doSaveCastGoal(), 1000);
+const autoSaveCastEval = debounce(() => doSaveCastEval(), 1000);
+const autoSaveManagerEval = debounce(() => doSaveManagerEval(), 1000);
+
+async function doSaveChorei() {
+  showAutoSaveStatus('choreiAutoSave', 'saving');
+  const salesInputs = document.querySelectorAll('.chorei-monthly-sales');
+  const drinksInputs = document.querySelectorAll('.chorei-monthly-drinks');
+  const selfVisitorsInput = document.querySelector('.chorei-self-visitors');
+  const selfGoalInput = document.querySelector('.manager-self-goal');
+  const selfPickupCheck = document.querySelector('.manager-self-pickup-check');
+  const selfPickupInput = document.querySelector('.manager-self-pickup-input');
+
+  const casts = State.choreiCasts.map((cast, i) => {
+    const isSelf = cast.gmail === State.gmail;
+    return {
+      castName: cast.castName,
+      gmail: cast.gmail,
+      monthlySales: parseInt(salesInputs[i]?.value) || 0,
+      monthlyDrinks: parseInt(drinksInputs[i]?.value) || 0,
+      expectedVisitors: isSelf && selfVisitorsInput ? (parseInt(selfVisitorsInput.value) || 0) : (cast.expectedVisitors || 0),
+      managerMemo: '',
+      castGoal: isSelf && selfGoalInput ? selfGoalInput.value.trim() : (cast.castGoal || ''),
+      needsPickup: isSelf && selfPickupCheck ? selfPickupCheck.checked : (cast.needsPickup || false),
+      pickupDestination: isSelf && selfPickupInput ? selfPickupInput.value.trim() : (cast.pickupDestination || ''),
+    };
+  });
+
+  const result = await api('/api/chorei', {
+    method: 'POST',
+    body: JSON.stringify({ storeCode: State.storeCode, casts }),
+  });
+
+  showAutoSaveStatus('choreiAutoSave', result.success ? 'saved' : 'error');
+}
+
+async function doSaveShurei() {
+  showAutoSaveStatus('shureiAutoSave', 'saving');
+  const result = await api('/api/shurei', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeCode: State.storeCode,
+      salesToday: parseInt(document.getElementById('shureiSalesTotal').value) || 0,
+      monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0,
+    }),
+  });
+  showAutoSaveStatus('shureiAutoSave', result.success ? 'saved' : 'error');
+}
+
+async function doSaveCastGoal() {
+  showAutoSaveStatus('castGoalAutoSave', 'saving');
+  const result = await api('/api/cast-goal', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeCode: State.storeCode,
+      gmail: State.gmail,
+      castName: State.castName || State.displayName,
+      goal: document.getElementById('castGoalInput').value.trim(),
+      expectedVisitors: parseInt(document.getElementById('castVisitorsInput').value) || 0,
+      needsPickup: document.getElementById('castPickupCheck').checked,
+      pickupDestination: document.getElementById('castPickupDest').value.trim(),
+    }),
+  });
+  showAutoSaveStatus('castGoalAutoSave', result.success ? 'saved' : 'error');
+}
+
+async function doSaveCastEval() {
+  if (!State.selectedScore) return;
+  showAutoSaveStatus('castEvalAutoSave', 'saving');
+  const result = await api('/api/self-evaluation', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeCode: State.storeCode,
+      gmail: State.gmail,
+      castName: State.castName || State.displayName,
+      score: State.selectedScore,
+      comment: document.getElementById('evalComment').value.trim(),
+      isEarlyLeave: false,
+    }),
+  });
+  showAutoSaveStatus('castEvalAutoSave', result.success ? 'saved' : 'error');
+}
+
+async function doSaveManagerEval() {
+  if (!State.managerSelectedScore) return;
+  showAutoSaveStatus('managerEvalAutoSave', 'saving');
+  const result = await api('/api/self-evaluation', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeCode: State.storeCode,
+      gmail: State.gmail,
+      castName: State.castName || State.displayName,
+      score: State.managerSelectedScore,
+      comment: document.getElementById('managerEvalComment').value.trim(),
+      isEarlyLeave: false,
+    }),
+  });
+  showAutoSaveStatus('managerEvalAutoSave', result.success ? 'saved' : 'error');
+  if (result.success) await loadManagerEvalData();
 }
 
 // =====================================================

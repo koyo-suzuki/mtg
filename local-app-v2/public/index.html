@@ -6,6 +6,7 @@
   <title>朝礼・終礼シート v2</title>
   <link rel="stylesheet" href="/styles/style.css">
   <script src="https://accounts.google.com/gsi/client" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div id="app">
@@ -110,7 +111,7 @@
             <!-- キャスト一覧 -->
             <div id="choreiCastList"></div>
 
-            <button id="saveChoreiBtn" class="btn btn-primary btn-block mt-20">保存</button>
+            <div id="choreiAutoSave" class="autosave-status hidden"></div>
           </div>
         </div>
 
@@ -130,7 +131,7 @@
               <input type="number" id="shureiMonthlySales" class="form-control" min="0" value="0">
             </div>
 
-            <button id="saveShureiBtn" class="btn btn-primary btn-block mt-20">保存</button>
+            <div id="shureiAutoSave" class="autosave-status hidden"></div>
           </div>
 
           <!-- 店責自身の振り返り -->
@@ -156,7 +157,7 @@
               <label>振り返りコメント</label>
               <textarea id="managerEvalComment" class="form-control" rows="3" placeholder="今日の反省や気づき"></textarea>
             </div>
-            <button id="saveManagerEvalBtn" class="btn btn-primary btn-block">保存</button>
+            <div id="managerEvalAutoSave" class="autosave-status hidden"></div>
           </div>
 
           <!-- 自己採点一覧 -->
@@ -240,7 +241,7 @@
 
             <div class="form-group">
               <label style="color:#fff">来店予定</label>
-              <div class="row" style="align-items:center; gap:8px;">
+              <div style="display:flex; align-items:center; gap:8px; flex-direction:row;">
                 <input type="number" id="castVisitorsInput" class="form-control" style="width:80px; flex:none;" min="0" value="0">
                 <span>組</span>
               </div>
@@ -266,7 +267,7 @@
               </div>
             </div>
 
-            <button id="saveCastGoal" class="btn btn-primary btn-block">保存</button>
+            <div id="castGoalAutoSave" class="autosave-status hidden"></div>
           </div>
         </div>
 
@@ -313,7 +314,7 @@
               <textarea id="evalComment" class="form-control" rows="3" placeholder="今日の反省や気づきを書いてね"></textarea>
             </div>
 
-            <button id="saveEvalBtn" class="btn btn-primary btn-block">保存</button>
+            <div id="castEvalAutoSave" class="autosave-status hidden"></div>
           </div>
         </div>
 
@@ -346,7 +347,99 @@
           <p class="text-sm text-muted">選択すると店責画面に入ります（自分はキャスト一覧に入りません）</p>
         </div>
 
+        <div class="card">
+          <div class="store-item" id="adminDashboard" style="border-left:3px solid var(--warning);">
+            <span class="store-item-name">ダッシュボード</span>
+            <span class="store-item-arrow">&rarr;</span>
+          </div>
+        </div>
+
         <button id="adminBack" class="btn btn-text btn-block">戻る</button>
+      </div>
+    </div>
+
+    <!-- ========== ダッシュボード画面 ========== -->
+    <div id="dashboardScreen" class="screen hidden">
+      <div class="container">
+        <!-- ヘッダー -->
+        <div class="dash-header">
+          <div class="dash-header-top">
+            <h1>ダッシュボード</h1>
+            <button id="dashBack" class="btn btn-outline btn-sm">戻る</button>
+          </div>
+          <div class="dash-controls">
+            <select id="dashStoreSelect" class="form-control dash-store-select">
+              <option value="">読み込み中...</option>
+            </select>
+            <div class="dash-date-presets">
+              <button class="dash-date-btn active" data-range="7">7日</button>
+              <button class="dash-date-btn" data-range="30">30日</button>
+              <button class="dash-date-btn" data-range="90">90日</button>
+              <button class="dash-date-btn" data-range="all">全期間</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ローディング -->
+        <div id="dashLoading" class="dash-loading hidden">
+          <span class="spinner" style="border-color:rgba(108,92,231,0.2);border-top-color:var(--primary);width:24px;height:24px;"></span>
+          <span>読み込み中...</span>
+        </div>
+
+        <!-- タブ -->
+        <div class="tabs" id="dashTabs">
+          <div class="tab active" data-tab="dashSales">売上</div>
+          <div class="tab" data-tab="dashAttendance">出勤</div>
+          <div class="tab" data-tab="dashCast">キャスト</div>
+          <div class="tab" data-tab="dashIssues">伝言板</div>
+        </div>
+
+        <!-- 売上タブ -->
+        <div id="dashSalesTab" class="tab-content active">
+          <div id="dashSalesMetrics" class="dash-metrics"></div>
+          <div class="card">
+            <div class="card-title">日次売上</div>
+            <div class="dash-chart-wrap"><canvas id="dashSalesChart"></canvas></div>
+          </div>
+        </div>
+
+        <!-- 出勤タブ -->
+        <div id="dashAttendanceTab" class="tab-content">
+          <div id="dashAttendanceMetrics" class="dash-metrics"></div>
+          <div class="card">
+            <div class="card-title">日次出勤人数</div>
+            <div class="dash-chart-wrap"><canvas id="dashAttendanceChart"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-title">出勤詳細</div>
+            <div id="dashAttendanceTable"></div>
+          </div>
+        </div>
+
+        <!-- キャストタブ -->
+        <div id="dashCastTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">キャスト別サマリー</div>
+            <div id="dashCastSummary"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">平均自己評価スコア推移</div>
+            <div class="dash-chart-wrap"><canvas id="dashScoreChart"></canvas></div>
+          </div>
+        </div>
+
+        <!-- 伝言板タブ -->
+        <div id="dashIssuesTab" class="tab-content">
+          <div id="dashIssuesMetrics" class="dash-metrics"></div>
+          <div class="card">
+            <div class="card-title">ステータス内訳</div>
+            <div class="dash-chart-wrap dash-chart-sm"><canvas id="dashIssueDonutChart"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-title">伝言一覧</div>
+            <div id="dashIssuesList"></div>
+          </div>
+        </div>
       </div>
     </div>
 
