@@ -237,7 +237,9 @@ function setupEvents() {
   document.getElementById('roleSelectBack').addEventListener('click', showLogin);
 
   document.getElementById('castStoreBack').addEventListener('click', () => {
-    if (State.role === 'cast_manager') {
+    if (HQ_ROLES.includes(State.role)) {
+      showAdminScreen();
+    } else if (State.role === 'cast_manager') {
       showRoleSelectScreen();
     } else {
       showLogin();
