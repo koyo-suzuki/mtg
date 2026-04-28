@@ -22,6 +22,7 @@
         <div class="card">
           <div class="card-title">Googleアカウントでログイン</div>
           <div id="googleSignInBtn" style="display:flex;justify-content:center;padding:20px 0;"></div>
+          <button id="devLoginBtn" class="btn btn-outline btn-block hidden">ローカル確認用ログイン</button>
           <div id="loginError" class="alert alert-error hidden"></div>
         </div>
       </div>
@@ -33,6 +34,11 @@
         <div class="header text-center">
           <h1>モードを選択</h1>
           <div class="subtitle" id="roleSelectGreeting"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">今月の売上進捗</div>
+          <div id="managerMonthlyProgress" class="dash-progress-loading">読み込み中...</div>
         </div>
 
         <div class="card">
@@ -335,6 +341,11 @@
         <div class="header text-center">
           <h1>本部</h1>
           <div class="subtitle" id="adminName"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">今月の売上進捗</div>
+          <div id="adminMonthlyProgress" class="dash-progress-loading">読み込み中...</div>
         </div>
 
         <div class="card">

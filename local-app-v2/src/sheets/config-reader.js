@@ -18,6 +18,11 @@ function setCache(key, data) {
   cache[key] = { data, time: Date.now() };
 }
 
+function parseSheetNumber(value) {
+  const normalized = String(value || '').replace(/[^\d.-]/g, '');
+  return parseInt(normalized || '0', 10) || 0;
+}
+
 /**
  * Get all users from config_users sheet
  * Returns: [{ email, role, castName, selectedStore }]
@@ -76,13 +81,13 @@ async function getCastMembers() {
 
 /**
  * Get all active stores from config_stores sheet
- * Returns: [{ code, name, area, areaCode, order }]
+ * Returns: [{ code, name, area, areaCode, order, brand, brandCode, monthlyTarget }]
  */
 async function getStores() {
   const cached = getCached('stores');
   if (cached) return cached;
 
-  const rows = await getRows(CONFIG_SPREADSHEET_ID, 'config_stores!A2:F20');
+  const rows = await getRows(CONFIG_SPREADSHEET_ID, 'config_stores!A2:I20');
   const stores = rows
     .filter(r => r[0] && r[0].toUpperCase() === 'TRUE')
     .map(r => ({
@@ -90,7 +95,10 @@ async function getStores() {
       name: (r[2] || '').trim(),
       area: (r[3] || '').trim(),
       areaCode: (r[4] || '').trim(),
-      order: parseInt(r[5] || '0'),
+      order: parseSheetNumber(r[5]),
+      brand: (r[6] || '').trim(),
+      brandCode: (r[7] || '').trim(),
+      monthlyTarget: parseSheetNumber(r[8]),
     }))
     .sort((a, b) => a.order - b.order);
 

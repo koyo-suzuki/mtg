@@ -24,6 +24,7 @@ const State = {
   dashDateFrom: null,
   dashDateTo: null,
   dashData: null,
+  dashStores: [],
   dashCharts: {},
 };
 
@@ -138,7 +139,7 @@ async function restoreScreen(screen) {
       await showStoreSelection();
       break;
     case 'roleSelect':
-      showRoleSelectScreen();
+      await showRoleSelectScreen();
       break;
     default:
       clearSession();
@@ -148,9 +149,19 @@ async function restoreScreen(screen) {
 
 async function initGoogleSignIn() {
   try {
+    const loginErrorParam = new URLSearchParams(window.location.search).get('loginError');
+    if (loginErrorParam) {
+      const loginError = document.getElementById('loginError');
+      loginError.textContent = loginErrorParam;
+      loginError.classList.remove('hidden');
+      history.replaceState({}, '', '/');
+    }
+
     const res = await fetch('/api/config');
     const config = await res.json();
     State.googleClientId = config.googleClientId;
+    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    document.getElementById('devLoginBtn').classList.toggle('hidden', !isLocalhost);
 
     // Wait for the Google Identity Services library to load
     if (typeof google === 'undefined' || !google.accounts) {
@@ -168,10 +179,15 @@ async function initGoogleSignIn() {
     }
 
     if (typeof google !== 'undefined' && google.accounts) {
-      google.accounts.id.initialize({
+      const googleConfig = {
         client_id: State.googleClientId,
         callback: handleGoogleCredentialResponse,
-      });
+      };
+      if (isLocalhost) {
+        googleConfig.ux_mode = 'redirect';
+        googleConfig.login_uri = `${window.location.origin}/api/auth/google-redirect`;
+      }
+      google.accounts.id.initialize(googleConfig);
       google.accounts.id.renderButton(
         document.getElementById('googleSignInBtn'),
         { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ja', width: 280 }
@@ -179,6 +195,39 @@ async function initGoogleSignIn() {
     }
   } catch (e) {
     console.error('Google Sign-In init error:', e);
+  }
+}
+
+async function onDevLogin() {
+  const loginError = document.getElementById('loginError');
+  loginError.classList.add('hidden');
+  try {
+    const result = await fetch('/api/dev-login', { method: 'POST' }).then(r => r.json());
+    if (!result.success) {
+      loginError.textContent = result.error || 'ログインに失敗しました';
+      loginError.classList.remove('hidden');
+      return;
+    }
+
+    const session = result.session;
+    Object.assign(State, {
+      gmail: session.gmail,
+      displayName: session.displayName,
+      castName: session.castName,
+      role: session.role,
+      isManager: session.isManager,
+      storeCode: session.storeCode,
+      storeName: session.storeName,
+      businessDate: session.businessDate,
+      idToken: session.idToken,
+      dashStoreCode: session.dashStoreCode,
+      dashDateRange: session.dashDateRange,
+    });
+    saveSession(session.screen);
+    await restoreScreen(session.screen);
+  } catch (e) {
+    loginError.textContent = '通信エラーが発生しました';
+    loginError.classList.remove('hidden');
   }
 }
 
@@ -312,6 +361,7 @@ function setupEvents() {
 
   // ダッシュボード導線（本部画面から）
   document.getElementById('adminDashboard').addEventListener('click', () => showDashboardScreen());
+  document.getElementById('devLoginBtn').addEventListener('click', onDevLogin);
   document.getElementById('dashBack').addEventListener('click', () => {
     // Destroy charts on leave
     Object.values(State.dashCharts).forEach(c => c.destroy());
@@ -386,10 +436,12 @@ function showLogin() {
   }
 }
 
-function showRoleSelectScreen() {
+async function showRoleSelectScreen() {
   hideAllScreens();
   document.getElementById('roleSelectScreen').classList.remove('hidden');
   document.getElementById('roleSelectGreeting').textContent = `${State.displayName} さん`;
+  document.getElementById('managerMonthlyProgress').innerHTML = '<div class="dash-progress-loading">読み込み中...</div>';
+  await loadTopMonthlyProgress('managerMonthlyProgress');
   saveSession('roleSelect');
 }
 
@@ -871,21 +923,60 @@ async function showAdminScreen() {
   hideAllScreens();
   document.getElementById('adminScreen').classList.remove('hidden');
   document.getElementById('adminName').textContent = State.displayName;
+  document.getElementById('adminMonthlyProgress').innerHTML = '<div class="dash-progress-loading">読み込み中...</div>';
 
   // 店舗プルダウン読み込み
   const result = await api('/api/stores');
   if (!result.success) return;
+  State.dashStores = result.stores || [];
 
   const select = document.getElementById('adminStoreSelect');
   select.innerHTML = '<option value="">店舗を選択...</option>';
-  result.stores.forEach(store => {
+  State.dashStores.forEach(store => {
     const opt = document.createElement('option');
     opt.value = store.code;
     opt.textContent = store.name;
     select.appendChild(opt);
   });
 
+  await loadTopMonthlyProgress('adminMonthlyProgress');
   saveSession('admin');
+}
+
+async function loadTopMonthlyProgress(containerId) {
+  const businessDate = State.businessDate || new Date().toISOString().slice(0, 10);
+  const monthStart = businessDate.slice(0, 8) + '01';
+  const previousDashData = State.dashData;
+  const previousDashStoreCode = State.dashStoreCode;
+  const previousDashDateFrom = State.dashDateFrom;
+  const previousDashDateTo = State.dashDateTo;
+
+  State.dashStoreCode = 'all';
+  State.dashDateFrom = monthStart;
+  State.dashDateTo = businessDate;
+
+  const params = new URLSearchParams({
+    storeCode: 'all',
+    from: monthStart,
+    to: businessDate,
+  });
+  const result = await api(`/api/dashboard/summary?${params}`);
+  if (!result.success) {
+    document.getElementById(containerId).innerHTML = '<p class="text-muted">売上進捗を取得できませんでした</p>';
+    State.dashData = previousDashData;
+    State.dashStoreCode = previousDashStoreCode;
+    State.dashDateFrom = previousDashDateFrom;
+    State.dashDateTo = previousDashDateTo;
+    return;
+  }
+
+  State.dashData = result;
+  renderMonthlyProgress(containerId);
+
+  State.dashData = previousDashData;
+  State.dashStoreCode = previousDashStoreCode;
+  State.dashDateFrom = previousDashDateFrom;
+  State.dashDateTo = previousDashDateTo;
 }
 
 async function onAdminStoreSelect() {
@@ -1407,10 +1498,11 @@ async function showDashboardScreen() {
   // Load stores for selector
   const result = await api('/api/stores');
   if (!result.success) return;
+  State.dashStores = result.stores || [];
 
   const select = document.getElementById('dashStoreSelect');
   select.innerHTML = '<option value="all">全店舗</option>';
-  result.stores.forEach(store => {
+  State.dashStores.forEach(store => {
     const opt = document.createElement('option');
     opt.value = store.code;
     opt.textContent = store.name;
@@ -1494,6 +1586,183 @@ function getOrCreateChart(canvasId, config) {
 
 function fmtYen(n) {
   return '\u00a5' + (n || 0).toLocaleString();
+}
+
+function fmtPercent(value) {
+  if (value === null || Number.isNaN(value)) return '-';
+  return value.toFixed(1) + '%';
+}
+
+function getDashRelativeDate(baseDate, offsetDays) {
+  const d = new Date(baseDate + 'T00:00:00');
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+function getAchievementClass(rate) {
+  if (rate === null || Number.isNaN(rate)) return 'is-muted';
+  if (rate >= 100) return 'is-good';
+  if (rate >= 80) return 'is-normal';
+  if (rate >= 60) return 'is-warning';
+  return 'is-danger';
+}
+
+function buildMonthlyProgressData() {
+  const data = State.dashData;
+  if (!data) return null;
+
+  const month = (State.businessDate || State.dashDateTo || new Date().toISOString().slice(0, 10)).slice(0, 7);
+  const yesterday = getDashRelativeDate(State.businessDate || State.dashDateTo, -1);
+  const storeFilter = State.dashStoreCode || 'all';
+  const stores = (State.dashStores || []).filter(store => storeFilter === 'all' || store.code === storeFilter);
+  const salesByStore = {};
+
+  data.sales.forEach(s => {
+    if (!salesByStore[s.storeCode]) {
+      salesByStore[s.storeCode] = { yesterdaySales: 0, monthlySales: 0, latestMonthlyDate: '' };
+    }
+    const storeSales = salesByStore[s.storeCode];
+    if (s.date === yesterday) storeSales.yesterdaySales += s.salesToday || 0;
+    if (s.date && s.date.slice(0, 7) === month && s.date >= storeSales.latestMonthlyDate) {
+      storeSales.latestMonthlyDate = s.date;
+      storeSales.monthlySales = s.monthlySales || 0;
+    }
+  });
+
+  const brandMap = {};
+  stores.forEach(store => {
+    const brandCode = store.brandCode || store.brand_code || store.areaCode || 'other';
+    const brandName = store.brand || store.area || 'その他';
+    if (!brandMap[brandCode]) {
+      brandMap[brandCode] = {
+        brandCode,
+        brandName,
+        yesterdaySales: 0,
+        monthlySales: 0,
+        monthlyTarget: 0,
+        stores: [],
+      };
+    }
+
+    const storeSales = salesByStore[store.code] || { yesterdaySales: 0, monthlySales: 0, latestMonthlyDate: '' };
+    const monthlyTarget = store.monthlyTarget || store.monthly_target || 0;
+    const rate = monthlyTarget > 0 ? (storeSales.monthlySales / monthlyTarget) * 100 : null;
+    const row = {
+      storeCode: store.code,
+      storeName: store.name,
+      yesterdaySales: storeSales.yesterdaySales,
+      monthlySales: storeSales.monthlySales,
+      monthlyTarget,
+      achievementRate: rate,
+      latestMonthlyDate: storeSales.latestMonthlyDate,
+    };
+
+    brandMap[brandCode].yesterdaySales += row.yesterdaySales;
+    brandMap[brandCode].monthlySales += row.monthlySales;
+    brandMap[brandCode].monthlyTarget += row.monthlyTarget;
+    brandMap[brandCode].stores.push(row);
+  });
+
+  const brands = Object.values(brandMap).map(brand => ({
+    ...brand,
+    achievementRate: brand.monthlyTarget > 0 ? (brand.monthlySales / brand.monthlyTarget) * 100 : null,
+  }));
+
+  const total = brands.reduce((acc, brand) => ({
+    yesterdaySales: acc.yesterdaySales + brand.yesterdaySales,
+    monthlySales: acc.monthlySales + brand.monthlySales,
+    monthlyTarget: acc.monthlyTarget + brand.monthlyTarget,
+  }), { yesterdaySales: 0, monthlySales: 0, monthlyTarget: 0 });
+
+  return {
+    month,
+    yesterday,
+    total: {
+      ...total,
+      achievementRate: total.monthlyTarget > 0 ? (total.monthlySales / total.monthlyTarget) * 100 : null,
+    },
+    brands,
+  };
+}
+
+function renderMonthlyProgress(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const progress = buildMonthlyProgressData();
+  if (!progress || progress.brands.length === 0) {
+    container.innerHTML = '<p class="text-muted">店舗データがありません</p>';
+    return;
+  }
+
+  const totalRateClass = getAchievementClass(progress.total.achievementRate);
+  const brands = progress.brands.sort((a, b) => b.monthlySales - a.monthlySales);
+
+  let html = `
+    <div class="dash-progress-meta">対象月 ${progress.month} / 昨日 ${progress.yesterday}</div>
+    <div class="dash-progress-total">
+      <div>
+        <span class="dash-progress-label">昨日売上</span>
+        <strong>${fmtYen(progress.total.yesterdaySales)}</strong>
+      </div>
+      <div>
+        <span class="dash-progress-label">今月累計</span>
+        <strong>${fmtYen(progress.total.monthlySales)}</strong>
+      </div>
+      <div>
+        <span class="dash-progress-label">月間目標</span>
+        <strong>${progress.total.monthlyTarget ? fmtYen(progress.total.monthlyTarget) : '目標未設定'}</strong>
+      </div>
+      <div>
+        <span class="dash-progress-label">達成率</span>
+        <strong class="${totalRateClass}">${fmtPercent(progress.total.achievementRate)}</strong>
+      </div>
+    </div>
+    <div class="dash-brand-list">
+  `;
+
+  brands.forEach((brand, index) => {
+    const rateClass = getAchievementClass(brand.achievementRate);
+    html += `
+      <details class="dash-brand-accordion" ${index === 0 ? 'open' : ''}>
+        <summary>
+          <span class="dash-brand-name">${escapeHtml(brand.brandName)}</span>
+          <span class="dash-brand-rate ${rateClass}">${fmtPercent(brand.achievementRate)}</span>
+        </summary>
+        <div class="dash-brand-summary">
+          <span>昨日 ${fmtYen(brand.yesterdaySales)}</span>
+          <span>今月 ${fmtYen(brand.monthlySales)}</span>
+          <span>目標 ${brand.monthlyTarget ? fmtYen(brand.monthlyTarget) : '未設定'}</span>
+        </div>
+        <div class="dash-store-progress-list">
+    `;
+
+    brand.stores.sort((a, b) => b.monthlySales - a.monthlySales).forEach(store => {
+      const storeRateClass = getAchievementClass(store.achievementRate);
+      html += `
+        <div class="dash-store-progress-row">
+          <div class="dash-store-progress-main">
+            <span class="dash-store-progress-name">${escapeHtml(store.storeName)}</span>
+            <span class="dash-store-progress-rate ${storeRateClass}">${fmtPercent(store.achievementRate)}</span>
+          </div>
+          <div class="dash-store-progress-values">
+            <span>昨日 ${fmtYen(store.yesterdaySales)}</span>
+            <span>今月 ${fmtYen(store.monthlySales)}</span>
+            <span>目標 ${store.monthlyTarget ? fmtYen(store.monthlyTarget) : '未設定'}</span>
+          </div>
+          ${store.latestMonthlyDate ? `<div class="dash-store-progress-date">最終入力 ${store.latestMonthlyDate}</div>` : ''}
+        </div>
+      `;
+    });
+
+    html += `
+        </div>
+      </details>
+    `;
+  });
+
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 // ---- Sales Tab ----

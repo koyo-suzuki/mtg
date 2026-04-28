@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // =====================================================
@@ -75,6 +76,95 @@ app.post('/api/auth/google', async (req, res) => {
   } catch (error) {
     console.error('Google auth error:', error.message);
     res.json({ success: false, error: '認証に失敗しました' });
+  }
+});
+
+app.post('/api/auth/google-redirect', async (req, res) => {
+  const idToken = req.body.credential;
+
+  try {
+    const payload = await verifyGoogleToken(idToken);
+    const email = payload.email;
+    const user = await configReader.getUserByEmail(email);
+
+    if (!user) {
+      return res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>Login Error</title></head><body><script>
+        sessionStorage.removeItem('mtg_session');
+        location.replace('/?loginError=' + encodeURIComponent('登録されていないアカウントです'));
+      </script></body></html>`);
+    }
+
+    const role = user.role;
+    const screen = ['senior_manager', 'manager', 'executive'].includes(role)
+      ? 'admin'
+      : role === 'cast_manager'
+        ? 'roleSelect'
+        : 'storeSelect';
+    const session = {
+      gmail: user.email,
+      displayName: user.castName || payload.name || email,
+      castName: user.castName || '',
+      role,
+      isManager: false,
+      storeCode: null,
+      storeName: null,
+      businessDate: getBusinessDate(),
+      idToken,
+      screen,
+      dashStoreCode: null,
+      dashDateRange: '7',
+    };
+
+    res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>Login</title></head><body><script>
+      sessionStorage.setItem('mtg_session', ${JSON.stringify(JSON.stringify(session))});
+      location.replace('/');
+    </script></body></html>`);
+  } catch (error) {
+    console.error('Google redirect auth error:', error.message);
+    res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>Login Error</title></head><body><script>
+      sessionStorage.removeItem('mtg_session');
+      location.replace('/?loginError=' + encodeURIComponent('認証に失敗しました'));
+    </script></body></html>`);
+  }
+});
+
+app.post('/api/dev-login', async (req, res) => {
+  if (!['localhost', '127.0.0.1', '::1'].includes(req.hostname)) {
+    return res.status(403).json({ success: false, error: 'ローカル環境でのみ利用できます' });
+  }
+
+  try {
+    const users = await configReader.getAllUsers();
+    const user = users.find(u => DASHBOARD_ROLES.includes(u.role)) || users[0];
+    if (!user) return res.json({ success: false, error: 'ログイン可能なユーザーが見つかりません' });
+
+    const role = user.role;
+    const screen = DASHBOARD_ROLES.includes(role)
+      ? 'admin'
+      : role === 'cast_manager'
+        ? 'roleSelect'
+        : 'storeSelect';
+
+    res.json({
+      success: true,
+      session: {
+        gmail: user.email,
+        displayName: user.castName || user.email,
+        castName: user.castName || '',
+        role,
+        isManager: false,
+        storeCode: null,
+        storeName: null,
+        businessDate: getBusinessDate(),
+        idToken: `dev:${user.email}`,
+        screen,
+        dashStoreCode: null,
+        dashDateRange: '7',
+      },
+    });
+  } catch (error) {
+    console.error('Dev login error:', error.message);
+    res.json({ success: false, error: error.message });
   }
 });
 
@@ -329,7 +419,7 @@ app.put('/api/issues/:id', async (req, res) => {
 // ダッシュボードAPI
 // =====================================================
 
-const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive'];
+const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive', 'cast_manager'];
 
 app.get('/api/dashboard/summary', async (req, res) => {
   if (!DASHBOARD_ROLES.includes(req.user.role)) {

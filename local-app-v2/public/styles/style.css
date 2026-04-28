@@ -907,6 +907,138 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
 }
 .dash-metric-up { color: var(--accent); }
 .dash-metric-down { color: var(--danger); }
+.is-good { color: var(--accent); }
+.is-normal { color: var(--text); }
+.is-warning { color: #D68910; }
+.is-danger { color: var(--danger); }
+.is-muted { color: var(--text-light); }
+
+/* 月間売上進捗 */
+.dash-progress-loading {
+  font-size: 0.8125rem;
+  color: var(--text-light);
+}
+.dash-progress-meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+.dash-progress-total {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+}
+.dash-progress-total > div {
+  min-width: 0;
+}
+.dash-progress-label {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.dash-progress-total strong {
+  display: block;
+  font-size: 0.9375rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.dash-brand-list {
+  display: grid;
+  gap: 8px;
+}
+.dash-brand-accordion {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--card);
+}
+.dash-brand-accordion summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 800;
+  list-style: none;
+}
+.dash-brand-accordion summary::-webkit-details-marker { display: none; }
+.dash-brand-accordion summary::before {
+  content: '▶';
+  color: var(--text-light);
+  font-size: 0.625rem;
+  margin-right: 2px;
+}
+.dash-brand-accordion[open] summary {
+  background: var(--primary-bg);
+}
+.dash-brand-accordion[open] summary::before {
+  content: '▼';
+  color: var(--primary);
+}
+.dash-brand-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 800;
+}
+.dash-brand-rate {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.dash-brand-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 0.8125rem;
+  color: var(--text);
+  font-weight: 600;
+}
+.dash-store-progress-list {
+  padding: 0 14px 12px;
+}
+.dash-store-progress-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.dash-store-progress-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.dash-store-progress-name {
+  font-weight: 700;
+  color: var(--text);
+  min-width: 0;
+}
+.dash-store-progress-rate {
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.dash-store-progress-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 0.75rem;
+  color: var(--text);
+  font-weight: 600;
+}
+.dash-store-progress-date {
+  margin-top: 2px;
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+}
 
 /* チャートラッパー */
 .dash-chart-wrap {
@@ -972,4 +1104,5 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
   .dash-chart-sm { height: 180px; }
   .dash-metrics { grid-template-columns: 1fr 1fr; }
   .dash-cast-stats { gap: 8px; font-size: 0.6875rem; }
+  .dash-progress-total { grid-template-columns: 1fr 1fr; }
 }
