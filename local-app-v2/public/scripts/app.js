@@ -944,6 +944,15 @@ async function showAdminScreen() {
 }
 
 async function loadTopMonthlyProgress(containerId) {
+  if (!State.dashStores || State.dashStores.length === 0) {
+    const storesResult = await api('/api/stores');
+    if (!storesResult.success) {
+      document.getElementById(containerId).innerHTML = '<p class="text-muted">店舗データを取得できませんでした</p>';
+      return;
+    }
+    State.dashStores = storesResult.stores || [];
+  }
+
   const businessDate = State.businessDate || new Date().toISOString().slice(0, 10);
   const monthStart = businessDate.slice(0, 8) + '01';
   const previousDashData = State.dashData;
