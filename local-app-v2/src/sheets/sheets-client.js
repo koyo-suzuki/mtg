@@ -1,6 +1,11 @@
 const { google } = require('googleapis');
 
 let sheetsClient = null;
+let lastRequestAt = 0;
+let requestQueue = Promise.resolve();
+
+const MIN_REQUEST_INTERVAL_MS = parseInt(process.env.SHEETS_MIN_REQUEST_INTERVAL_MS || '250', 10);
+const MAX_RETRIES = parseInt(process.env.SHEETS_API_MAX_RETRIES || '3', 10);
 
 function getAuth() {
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -24,12 +29,64 @@ function getSheets() {
   return sheetsClient;
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableSheetsError(error) {
+  const status = error?.code || error?.response?.status;
+  const reason = error?.errors?.[0]?.reason || error?.response?.data?.error?.status || '';
+  const message = String(error?.message || '').toLowerCase();
+
+  return status === 429 ||
+    status === 500 ||
+    status === 503 ||
+    reason.toLowerCase().includes('quota') ||
+    reason.toLowerCase().includes('ratelimit') ||
+    message.includes('quota') ||
+    message.includes('rate limit') ||
+    message.includes('resource has been exhausted');
+}
+
+function withRequestQueue(operation) {
+  const run = requestQueue.then(async () => {
+    const waitMs = Math.max(0, MIN_REQUEST_INTERVAL_MS - (Date.now() - lastRequestAt));
+    if (waitMs > 0) await sleep(waitMs);
+    lastRequestAt = Date.now();
+    return operation();
+  });
+  requestQueue = run.catch(() => {});
+  return run;
+}
+
+async function callSheets(operation, label) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      return await withRequestQueue(operation);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableSheetsError(error) || attempt === MAX_RETRIES) break;
+
+      const backoffMs = Math.min(30000, 1000 * (2 ** attempt)) + Math.floor(Math.random() * 500);
+      console.warn(`Sheets API retry ${attempt + 1}/${MAX_RETRIES} for ${label}: ${error.message}`);
+      await sleep(backoffMs);
+    }
+  }
+
+  throw lastError;
+}
+
 /**
  * Read rows from a sheet range
  */
 async function getRows(spreadsheetId, range) {
   const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const res = await callSheets(
+    () => sheets.spreadsheets.values.get({ spreadsheetId, range }),
+    `get ${range}`
+  );
   return res.data.values || [];
 }
 
@@ -38,13 +95,16 @@ async function getRows(spreadsheetId, range) {
  */
 async function appendRows(spreadsheetId, range, values) {
   const sheets = getSheets();
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values },
-  });
+  await callSheets(
+    () => sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values },
+    }),
+    `append ${range}`
+  );
 }
 
 /**
@@ -52,12 +112,15 @@ async function appendRows(spreadsheetId, range, values) {
  */
 async function updateRange(spreadsheetId, range, values) {
   const sheets = getSheets();
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range,
-    valueInputOption: 'RAW',
-    requestBody: { values },
-  });
+  await callSheets(
+    () => sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: 'RAW',
+      requestBody: { values },
+    }),
+    `update ${range}`
+  );
 }
 
 /**
@@ -65,11 +128,14 @@ async function updateRange(spreadsheetId, range, values) {
  */
 async function clearRange(spreadsheetId, range) {
   const sheets = getSheets();
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId,
-    range,
-    requestBody: {},
-  });
+  await callSheets(
+    () => sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range,
+      requestBody: {},
+    }),
+    `clear ${range}`
+  );
 }
 
 /**
@@ -77,7 +143,10 @@ async function clearRange(spreadsheetId, range) {
  */
 async function batchGet(spreadsheetId, ranges) {
   const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId, ranges });
+  const res = await callSheets(
+    () => sheets.spreadsheets.values.batchGet({ spreadsheetId, ranges }),
+    `batchGet ${ranges.join(',')}`
+  );
   return res.data.valueRanges || [];
 }
 

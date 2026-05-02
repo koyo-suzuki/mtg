@@ -397,6 +397,13 @@ function setupEvents() {
 // API
 // =====================================================
 
+function isQuotaMessage(message) {
+  const text = String(message || '').toLowerCase();
+  return text.includes('quota') ||
+    text.includes('rate limit') ||
+    text.includes('resource has been exhausted');
+}
+
 async function api(endpoint, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   if (State.idToken) {
@@ -408,7 +415,11 @@ async function api(endpoint, options = {}) {
     showLogin();
     return { success: false, error: 'セッションが切れました。再度ログインしてください。' };
   }
-  return res.json();
+  const data = await res.json();
+  if (!data.success && isQuotaMessage(data.error)) {
+    data.error = '混雑中です。少し待ってから再度保存してください';
+  }
+  return data;
 }
 
 // =====================================================
@@ -2109,7 +2120,7 @@ function debounce(fn, delay) {
   return debounced;
 }
 
-function showAutoSaveStatus(elementId, status) {
+function showAutoSaveStatus(elementId, status, message) {
   const el = document.getElementById(elementId);
   if (!el) return;
   el.classList.remove('hidden', 'autosave-saving', 'autosave-saved', 'autosave-error');
@@ -2122,66 +2133,104 @@ function showAutoSaveStatus(elementId, status) {
     setTimeout(() => el.classList.add('hidden'), 2000);
   } else if (status === 'error') {
     el.className = 'autosave-status autosave-error';
-    el.textContent = '保存に失敗しました';
-    setTimeout(() => el.classList.add('hidden'), 3000);
+    el.textContent = message || '保存に失敗しました';
+    setTimeout(() => el.classList.add('hidden'), 5000);
+  }
+}
+
+const AUTO_SAVE_DELAY_MS = 5000;
+const autoSaveLocks = {};
+
+function getAutoSaveErrorMessage(result) {
+  if (isQuotaMessage(result?.error)) {
+    return '混雑中です。少し待って再試行します';
+  }
+  return '保存に失敗しました';
+}
+
+async function runAutoSave(key, elementId, saveFn) {
+  const lock = autoSaveLocks[key] || { inFlight: false, pending: false };
+  autoSaveLocks[key] = lock;
+
+  if (lock.inFlight) {
+    lock.pending = true;
+    return;
+  }
+
+  lock.inFlight = true;
+  try {
+    do {
+      lock.pending = false;
+      showAutoSaveStatus(elementId, 'saving');
+      let result;
+      try {
+        result = await saveFn();
+      } catch (error) {
+        result = { success: false, error: error.message };
+      }
+
+      showAutoSaveStatus(
+        elementId,
+        result.success ? 'saved' : 'error',
+        result.success ? null : getAutoSaveErrorMessage(result)
+      );
+    } while (lock.pending);
+  } finally {
+    lock.inFlight = false;
   }
 }
 
 // Debounced auto-save functions
-const autoSaveChorei = debounce(() => doSaveChorei(), 1000);
-const autoSaveShurei = debounce(() => doSaveShurei(), 1000);
-const autoSaveCastGoal = debounce(() => doSaveCastGoal(), 1000);
-const autoSaveCastEval = debounce(() => doSaveCastEval(), 1000);
-const autoSaveManagerEval = debounce(() => doSaveManagerEval(), 1000);
+const autoSaveChorei = debounce(() => doSaveChorei(), AUTO_SAVE_DELAY_MS);
+const autoSaveShurei = debounce(() => doSaveShurei(), AUTO_SAVE_DELAY_MS);
+const autoSaveCastGoal = debounce(() => doSaveCastGoal(), AUTO_SAVE_DELAY_MS);
+const autoSaveCastEval = debounce(() => doSaveCastEval(), AUTO_SAVE_DELAY_MS);
+const autoSaveManagerEval = debounce(() => doSaveManagerEval(), AUTO_SAVE_DELAY_MS);
 
 async function doSaveChorei() {
-  showAutoSaveStatus('choreiAutoSave', 'saving');
-  const salesInputs = document.querySelectorAll('.chorei-monthly-sales');
-  const drinksInputs = document.querySelectorAll('.chorei-monthly-drinks');
-  const selfVisitorsInput = document.querySelector('.chorei-self-visitors');
-  const selfGoalInput = document.querySelector('.manager-self-goal');
-  const selfPickupCheck = document.querySelector('.manager-self-pickup-check');
-  const selfPickupInput = document.querySelector('.manager-self-pickup-input');
+  return runAutoSave('chorei', 'choreiAutoSave', async () => {
+    const salesInputs = document.querySelectorAll('.chorei-monthly-sales');
+    const drinksInputs = document.querySelectorAll('.chorei-monthly-drinks');
+    const selfVisitorsInput = document.querySelector('.chorei-self-visitors');
+    const selfGoalInput = document.querySelector('.manager-self-goal');
+    const selfPickupCheck = document.querySelector('.manager-self-pickup-check');
+    const selfPickupInput = document.querySelector('.manager-self-pickup-input');
 
-  const casts = State.choreiCasts.map((cast, i) => {
-    const isSelf = cast.gmail === State.gmail;
-    return {
-      castName: cast.castName,
-      gmail: cast.gmail,
-      monthlySales: parseInt(salesInputs[i]?.value) || 0,
-      monthlyDrinks: parseInt(drinksInputs[i]?.value) || 0,
-      expectedVisitors: isSelf && selfVisitorsInput ? (parseInt(selfVisitorsInput.value) || 0) : (cast.expectedVisitors || 0),
-      managerMemo: '',
-      castGoal: isSelf && selfGoalInput ? selfGoalInput.value.trim() : (cast.castGoal || ''),
-      needsPickup: isSelf && selfPickupCheck ? selfPickupCheck.checked : (cast.needsPickup || false),
-      pickupDestination: isSelf && selfPickupInput ? selfPickupInput.value.trim() : (cast.pickupDestination || ''),
-    };
+    const casts = State.choreiCasts.map((cast, i) => {
+      const isSelf = cast.gmail === State.gmail;
+      return {
+        castName: cast.castName,
+        gmail: cast.gmail,
+        monthlySales: parseInt(salesInputs[i]?.value) || 0,
+        monthlyDrinks: parseInt(drinksInputs[i]?.value) || 0,
+        expectedVisitors: isSelf && selfVisitorsInput ? (parseInt(selfVisitorsInput.value) || 0) : (cast.expectedVisitors || 0),
+        managerMemo: '',
+        castGoal: isSelf && selfGoalInput ? selfGoalInput.value.trim() : (cast.castGoal || ''),
+        needsPickup: isSelf && selfPickupCheck ? selfPickupCheck.checked : (cast.needsPickup || false),
+        pickupDestination: isSelf && selfPickupInput ? selfPickupInput.value.trim() : (cast.pickupDestination || ''),
+      };
+    });
+
+    return api('/api/chorei', {
+      method: 'POST',
+      body: JSON.stringify({ storeCode: State.storeCode, casts }),
+    });
   });
-
-  const result = await api('/api/chorei', {
-    method: 'POST',
-    body: JSON.stringify({ storeCode: State.storeCode, casts }),
-  });
-
-  showAutoSaveStatus('choreiAutoSave', result.success ? 'saved' : 'error');
 }
 
 async function doSaveShurei() {
-  showAutoSaveStatus('shureiAutoSave', 'saving');
-  const result = await api('/api/shurei', {
+  return runAutoSave('shurei', 'shureiAutoSave', () => api('/api/shurei', {
     method: 'POST',
     body: JSON.stringify({
       storeCode: State.storeCode,
       salesToday: parseInt(document.getElementById('shureiSalesTotal').value) || 0,
       monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0,
     }),
-  });
-  showAutoSaveStatus('shureiAutoSave', result.success ? 'saved' : 'error');
+  }));
 }
 
 async function doSaveCastGoal() {
-  showAutoSaveStatus('castGoalAutoSave', 'saving');
-  const result = await api('/api/cast-goal', {
+  return runAutoSave('castGoal', 'castGoalAutoSave', () => api('/api/cast-goal', {
     method: 'POST',
     body: JSON.stringify({
       storeCode: State.storeCode,
@@ -2192,14 +2241,12 @@ async function doSaveCastGoal() {
       needsPickup: document.getElementById('castPickupCheck').checked,
       pickupDestination: document.getElementById('castPickupDest').value.trim(),
     }),
-  });
-  showAutoSaveStatus('castGoalAutoSave', result.success ? 'saved' : 'error');
+  }));
 }
 
 async function doSaveCastEval() {
   if (!State.selectedScore) return;
-  showAutoSaveStatus('castEvalAutoSave', 'saving');
-  const result = await api('/api/self-evaluation', {
+  return runAutoSave('castEval', 'castEvalAutoSave', () => api('/api/self-evaluation', {
     method: 'POST',
     body: JSON.stringify({
       storeCode: State.storeCode,
@@ -2209,26 +2256,26 @@ async function doSaveCastEval() {
       comment: document.getElementById('evalComment').value.trim(),
       isEarlyLeave: false,
     }),
-  });
-  showAutoSaveStatus('castEvalAutoSave', result.success ? 'saved' : 'error');
+  }));
 }
 
 async function doSaveManagerEval() {
   if (!State.managerSelectedScore) return;
-  showAutoSaveStatus('managerEvalAutoSave', 'saving');
-  const result = await api('/api/self-evaluation', {
-    method: 'POST',
-    body: JSON.stringify({
-      storeCode: State.storeCode,
-      gmail: State.gmail,
-      castName: State.castName || State.displayName,
-      score: State.managerSelectedScore,
-      comment: document.getElementById('managerEvalComment').value.trim(),
-      isEarlyLeave: false,
-    }),
+  return runAutoSave('managerEval', 'managerEvalAutoSave', async () => {
+    const result = await api('/api/self-evaluation', {
+      method: 'POST',
+      body: JSON.stringify({
+        storeCode: State.storeCode,
+        gmail: State.gmail,
+        castName: State.castName || State.displayName,
+        score: State.managerSelectedScore,
+        comment: document.getElementById('managerEvalComment').value.trim(),
+        isEarlyLeave: false,
+      }),
+    });
+    if (result.success) await loadManagerEvalData();
+    return result;
   });
-  showAutoSaveStatus('managerEvalAutoSave', result.success ? 'saved' : 'error');
-  if (result.success) await loadManagerEvalData();
 }
 
 // =====================================================
