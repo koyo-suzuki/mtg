@@ -2123,18 +2123,26 @@ function debounce(fn, delay) {
 function showAutoSaveStatus(elementId, status, message) {
   const el = document.getElementById(elementId);
   if (!el) return;
-  el.classList.remove('hidden', 'autosave-saving', 'autosave-saved', 'autosave-error');
-  if (status === 'saving') {
+  if (el._hideTimer) {
+    clearTimeout(el._hideTimer);
+    el._hideTimer = null;
+  }
+
+  el.classList.remove('hidden', 'autosave-pending', 'autosave-saving', 'autosave-saved', 'autosave-error');
+  if (status === 'pending') {
+    el.className = 'autosave-status autosave-pending';
+    el.textContent = '保存待ち...';
+  } else if (status === 'saving') {
     el.className = 'autosave-status autosave-saving';
     el.textContent = '保存中...';
   } else if (status === 'saved') {
     el.className = 'autosave-status autosave-saved';
     el.textContent = '保存済み';
-    setTimeout(() => el.classList.add('hidden'), 2000);
+    el._hideTimer = setTimeout(() => el.classList.add('hidden'), 2000);
   } else if (status === 'error') {
     el.className = 'autosave-status autosave-error';
     el.textContent = message || '保存に失敗しました';
-    setTimeout(() => el.classList.add('hidden'), 5000);
+    el._hideTimer = setTimeout(() => el.classList.add('hidden'), 5000);
   }
 }
 
@@ -2181,11 +2189,21 @@ async function runAutoSave(key, elementId, saveFn) {
 }
 
 // Debounced auto-save functions
-const autoSaveChorei = debounce(() => doSaveChorei(), AUTO_SAVE_DELAY_MS);
-const autoSaveShurei = debounce(() => doSaveShurei(), AUTO_SAVE_DELAY_MS);
-const autoSaveCastGoal = debounce(() => doSaveCastGoal(), AUTO_SAVE_DELAY_MS);
-const autoSaveCastEval = debounce(() => doSaveCastEval(), AUTO_SAVE_DELAY_MS);
-const autoSaveManagerEval = debounce(() => doSaveManagerEval(), AUTO_SAVE_DELAY_MS);
+function createAutoSave(elementId, saveFn) {
+  const debounced = debounce(saveFn, AUTO_SAVE_DELAY_MS);
+  const wrapped = function (...args) {
+    showAutoSaveStatus(elementId, 'pending');
+    debounced.apply(this, args);
+  };
+  wrapped.flush = debounced.flush;
+  return wrapped;
+}
+
+const autoSaveChorei = createAutoSave('choreiAutoSave', () => doSaveChorei());
+const autoSaveShurei = createAutoSave('shureiAutoSave', () => doSaveShurei());
+const autoSaveCastGoal = createAutoSave('castGoalAutoSave', () => doSaveCastGoal());
+const autoSaveCastEval = createAutoSave('castEvalAutoSave', () => doSaveCastEval());
+const autoSaveManagerEval = createAutoSave('managerEvalAutoSave', () => doSaveManagerEval());
 
 async function doSaveChorei() {
   return runAutoSave('chorei', 'choreiAutoSave', async () => {

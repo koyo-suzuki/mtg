@@ -815,6 +815,7 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
   margin-top: 12px;
   transition: opacity 0.3s;
 }
+.autosave-pending { color: var(--text-light); }
 .autosave-saving { color: var(--text-light); }
 .autosave-saved { color: var(--accent); }
 .autosave-error { color: var(--danger); }
