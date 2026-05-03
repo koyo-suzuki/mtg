@@ -35,6 +35,10 @@ const State = {
 const HQ_ROLES = ['senior_manager', 'manager', 'executive'];       // 本部系（店責代行可能）
 const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive']; // ダッシュボード閲覧可能
 
+function shouldUseRoleSelect(role, castName = State.castName) {
+  return role === 'cast_manager' || (role === 'manager' && Boolean(castName));
+}
+
 // =====================================================
 // セッション保持
 // =====================================================
@@ -258,10 +262,10 @@ async function handleGoogleCredentialResponse(response) {
     const dateResult = await api('/api/business-date');
     State.businessDate = dateResult.date;
 
-    if (HQ_ROLES.includes(result.role)) {
-      await showAdminScreen();
-    } else if (result.role === 'cast_manager') {
+    if (shouldUseRoleSelect(result.role, result.castName)) {
       showRoleSelectScreen();
+    } else if (HQ_ROLES.includes(result.role)) {
+      await showAdminScreen();
     } else {
       // cast
       State.isManager = false;
@@ -276,6 +280,11 @@ async function handleGoogleCredentialResponse(response) {
 function setupEvents() {
   // ロール選択
   document.getElementById('roleSelectManager').addEventListener('click', async () => {
+    if (State.role === 'manager') {
+      State.isManager = false;
+      await showAdminScreen();
+      return;
+    }
     State.isManager = true;
     await showStoreSelection();
   });
@@ -286,10 +295,10 @@ function setupEvents() {
   document.getElementById('roleSelectBack').addEventListener('click', showLogin);
 
   document.getElementById('castStoreBack').addEventListener('click', () => {
-    if (HQ_ROLES.includes(State.role)) {
-      showAdminScreen();
-    } else if (State.role === 'cast_manager') {
+    if (shouldUseRoleSelect(State.role)) {
       showRoleSelectScreen();
+    } else if (HQ_ROLES.includes(State.role)) {
+      showAdminScreen();
     } else {
       showLogin();
     }
@@ -451,6 +460,8 @@ async function showRoleSelectScreen() {
   hideAllScreens();
   document.getElementById('roleSelectScreen').classList.remove('hidden');
   document.getElementById('roleSelectGreeting').textContent = `${State.displayName} さん`;
+  document.querySelector('#roleSelectManager .store-item-name').textContent =
+    State.role === 'manager' ? '管理画面に入る' : '店責として入る';
   document.getElementById('managerMonthlyProgress').innerHTML = '<div class="dash-progress-loading">読み込み中...</div>';
   await loadTopMonthlyProgress('managerMonthlyProgress');
   saveSession('roleSelect');

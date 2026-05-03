@@ -35,6 +35,10 @@ function getBusinessDate() {
   return `${y}-${m}-${d}`;
 }
 
+function shouldUseRoleSelect(role, castName) {
+  return role === 'cast_manager' || (role === 'manager' && Boolean(castName));
+}
+
 // =====================================================
 // 公開API（認証不要）
 // =====================================================
@@ -95,11 +99,11 @@ app.post('/api/auth/google-redirect', async (req, res) => {
     }
 
     const role = user.role;
-    const screen = ['senior_manager', 'manager', 'executive'].includes(role)
-      ? 'admin'
-      : role === 'cast_manager'
+    const screen = shouldUseRoleSelect(role, user.castName)
         ? 'roleSelect'
-        : 'storeSelect';
+        : ['senior_manager', 'manager', 'executive'].includes(role)
+          ? 'admin'
+          : 'storeSelect';
     const session = {
       gmail: user.email,
       displayName: user.castName || payload.name || email,
@@ -139,11 +143,11 @@ app.post('/api/dev-login', async (req, res) => {
     if (!user) return res.json({ success: false, error: 'ログイン可能なユーザーが見つかりません' });
 
     const role = user.role;
-    const screen = DASHBOARD_ROLES.includes(role)
-      ? 'admin'
-      : role === 'cast_manager'
+    const screen = shouldUseRoleSelect(role, user.castName)
         ? 'roleSelect'
-        : 'storeSelect';
+        : DASHBOARD_ROLES.includes(role)
+          ? 'admin'
+          : 'storeSelect';
 
     res.json({
       success: true,
