@@ -44,6 +44,10 @@ function shouldUseRoleSelect(role, castName = State.castName) {
   return role === 'cast_manager' || (role === 'manager' && Boolean(castName));
 }
 
+function canViewManagerFeedback() {
+  return State.role === 'executive';
+}
+
 // =====================================================
 // セッション保持
 // =====================================================
@@ -1754,6 +1758,17 @@ function updateDashPeriodControls() {
     btn.classList.toggle('active', btn.dataset.period === State.dashPeriod);
   });
 
+  const feedbackTab = document.querySelector('#dashTabs .tab[data-tab="dashManagerFeedback"]');
+  const feedbackContent = document.getElementById('dashManagerFeedbackTab');
+  const showFeedback = canViewManagerFeedback();
+  if (feedbackTab) feedbackTab.classList.toggle('hidden', !showFeedback);
+  if (feedbackContent && !showFeedback) feedbackContent.classList.remove('active');
+  if (!showFeedback && feedbackTab?.classList.contains('active')) {
+    feedbackTab.classList.remove('active');
+    document.querySelector('#dashTabs .tab[data-tab="dashSales"]')?.classList.add('active');
+    document.getElementById('dashSalesTab')?.classList.add('active');
+  }
+
   const compareSelect = document.getElementById('dashCompareSelect');
   if (compareSelect) compareSelect.value = State.dashCompareMode || 'none';
 
@@ -1861,6 +1876,10 @@ function renderActiveDashTab() {
   const active = document.querySelector('#dashTabs .tab.active');
   if (!active) return;
   const name = active.dataset.tab;
+  if (name === 'dashManagerFeedback' && !canViewManagerFeedback()) {
+    document.querySelector('#dashTabs .tab[data-tab="dashSales"]')?.click();
+    return;
+  }
   if (name === 'dashSales') renderDashSalesTab();
   else if (name === 'dashAttendance') renderDashAttendanceTab();
   else if (name === 'dashCast') renderDashCastTab();
@@ -2487,6 +2506,7 @@ function renderDashIssuesTab() {
 // ---- Manager Feedback Tab ----
 
 function renderDashManagerFeedbackTab() {
+  if (!canViewManagerFeedback()) return;
   const data = State.dashData;
   if (!data) return;
 

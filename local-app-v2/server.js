@@ -10,7 +10,7 @@ const dataStore = require('./src/sheets/data-store');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const FEEDBACK_VIEW_ROLES = ['senior_manager', 'manager', 'executive'];
+const FEEDBACK_VIEW_ROLES = ['executive'];
 const DEV_LOGIN_ROLES = [
   { role: 'executive', label: '決済者' },
   { role: 'senior_manager', label: '店のトップ' },
@@ -505,9 +505,13 @@ app.get('/api/dashboard/summary', async (req, res) => {
   }
 
   try {
+    const includeManagerFeedback = FEEDBACK_VIEW_ROLES.includes(req.user.role);
     const data = await dataStore.getDashboardSummary(from, to, storeCode, {
-      includeManagerFeedback: FEEDBACK_VIEW_ROLES.includes(req.user.role),
+      includeManagerFeedback,
     });
+    if (!includeManagerFeedback) {
+      delete data.managerFeedback;
+    }
     res.json({ success: true, ...data });
   } catch (error) {
     console.error('Dashboard error:', error);
