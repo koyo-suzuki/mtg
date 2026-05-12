@@ -22,7 +22,10 @@
         <div class="card">
           <div class="card-title">Googleアカウントでログイン</div>
           <div id="googleSignInBtn" style="display:flex;justify-content:center;padding:20px 0;"></div>
-          <button id="devLoginBtn" class="btn btn-outline btn-block hidden">ローカル確認用ログイン</button>
+          <div id="devLoginArea" class="dev-login-area hidden">
+            <div class="dev-login-title">ローカル確認用ログイン</div>
+            <div id="devLoginButtons" class="dev-login-buttons"></div>
+          </div>
           <div id="loginError" class="alert alert-error hidden"></div>
         </div>
       </div>
@@ -233,6 +236,7 @@
           <div class="tab" data-tab="castShureiView">終礼</div>
           <div class="tab" data-tab="castEval">振り返り</div>
           <div class="tab" data-tab="castIssues">伝言板</div>
+          <div class="tab" data-tab="castManagerFeedback">店責FB</div>
         </div>
 
         <!-- 目標入力タブ -->
@@ -332,6 +336,36 @@
             <div id="castIssuesList"></div>
           </div>
         </div>
+
+        <!-- 店責フィードバックタブ -->
+        <div id="castManagerFeedbackTab" class="tab-content">
+          <div class="card manager-feedback-card">
+            <div class="card-title">店責フィードバック</div>
+            <div id="castManagerFeedbackAlert" class="alert hidden"></div>
+
+            <div class="feedback-explain">
+              店責・副店責の対応について、良かったことや気になったことを送れます。
+              店責や他のキャストからは、誰が送ったか分かりません。
+            </div>
+
+            <div class="form-group">
+              <label>対象日</label>
+              <input type="date" id="managerFeedbackDate" class="form-control">
+            </div>
+
+            <div class="form-group">
+              <label>対象キャスト</label>
+              <input type="text" id="managerFeedbackTarget" class="form-control" placeholder="店責・副店責名（わかる範囲でOK）">
+            </div>
+
+            <div class="form-group">
+              <label>内容</label>
+              <textarea id="managerFeedbackContent" class="form-control" rows="5" placeholder="例：つけ回しが適切で助かった／裏にいる時間が長くて困った"></textarea>
+            </div>
+
+            <button id="postManagerFeedback" class="btn btn-primary btn-block">匿名扱いで送信</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -382,13 +416,29 @@
             <select id="dashStoreSelect" class="form-control dash-store-select">
               <option value="">読み込み中...</option>
             </select>
+            <label class="dash-base-date-control">
+              <span>対象日</span>
+              <input type="date" id="dashBaseDateInput" class="form-control">
+            </label>
             <div class="dash-date-presets">
-              <button class="dash-date-btn active" data-range="7">7日</button>
-              <button class="dash-date-btn" data-range="30">30日</button>
-              <button class="dash-date-btn" data-range="90">90日</button>
-              <button class="dash-date-btn" data-range="all">全期間</button>
+              <button class="dash-date-btn active" data-period="thisWeek">今週</button>
+              <button class="dash-date-btn" data-period="lastWeek">先週</button>
+              <button class="dash-date-btn" data-period="thisMonth">当月</button>
+              <button class="dash-date-btn" data-period="lastMonth">先月</button>
+              <button class="dash-date-btn" data-period="custom">日付指定</button>
             </div>
+            <select id="dashCompareSelect" class="form-control dash-compare-select">
+              <option value="none">比較なし</option>
+              <option value="prevWeek">前週と比較</option>
+              <option value="prevMonth">前月同期間と比較</option>
+            </select>
           </div>
+          <div id="dashCustomRange" class="dash-custom-range hidden">
+            <input type="date" id="dashDateFromInput" class="form-control">
+            <span>〜</span>
+            <input type="date" id="dashDateToInput" class="form-control">
+          </div>
+          <div id="dashPeriodLabel" class="dash-period-label"></div>
         </div>
 
         <!-- ローディング -->
@@ -403,6 +453,7 @@
           <div class="tab" data-tab="dashAttendance">出勤</div>
           <div class="tab" data-tab="dashCast">キャスト</div>
           <div class="tab" data-tab="dashIssues">伝言板</div>
+          <div class="tab" data-tab="dashManagerFeedback">店責FB</div>
         </div>
 
         <!-- 売上タブ -->
@@ -449,6 +500,15 @@
           <div class="card">
             <div class="card-title">伝言一覧</div>
             <div id="dashIssuesList"></div>
+          </div>
+        </div>
+
+        <!-- 店責フィードバックタブ -->
+        <div id="dashManagerFeedbackTab" class="tab-content">
+          <div id="dashManagerFeedbackMetrics" class="dash-metrics"></div>
+          <div class="card">
+            <div class="card-title">店責フィードバック一覧</div>
+            <div id="dashManagerFeedbackList"></div>
           </div>
         </div>
       </div>

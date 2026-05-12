@@ -10,6 +10,14 @@ const dataStore = require('./src/sheets/data-store');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const FEEDBACK_VIEW_ROLES = ['senior_manager', 'manager', 'executive'];
+const DEV_LOGIN_ROLES = [
+  { role: 'executive', label: '決済者' },
+  { role: 'senior_manager', label: '店のトップ' },
+  { role: 'manager', label: '店長' },
+  { role: 'cast_manager', label: '店責' },
+  { role: 'cast', label: 'キャスト' },
+];
 
 app.use(cors());
 app.use(express.json());
@@ -116,7 +124,8 @@ app.post('/api/auth/google-redirect', async (req, res) => {
       idToken,
       screen,
       dashStoreCode: null,
-      dashDateRange: '7',
+      dashPeriod: 'thisWeek',
+      dashCompareMode: 'prevWeek',
     };
 
     res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>Login</title></head><body><script>
@@ -139,7 +148,10 @@ app.post('/api/dev-login', async (req, res) => {
 
   try {
     const users = await configReader.getAllUsers();
-    const user = users.find(u => DASHBOARD_ROLES.includes(u.role)) || users[0];
+    const requestedRole = String(req.body?.role || '').trim();
+    const user = requestedRole
+      ? users.find(u => u.role === requestedRole)
+      : users.find(u => DASHBOARD_ROLES.includes(u.role)) || users[0];
     if (!user) return res.json({ success: false, error: 'ログイン可能なユーザーが見つかりません' });
 
     const role = user.role;
@@ -163,11 +175,39 @@ app.post('/api/dev-login', async (req, res) => {
         idToken: `dev:${user.email}`,
         screen,
         dashStoreCode: null,
-        dashDateRange: '7',
+        dashPeriod: 'thisWeek',
+        dashCompareMode: 'prevWeek',
       },
     });
   } catch (error) {
     console.error('Dev login error:', error.message);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/dev-login-options', async (req, res) => {
+  if (!['localhost', '127.0.0.1', '::1'].includes(req.hostname)) {
+    return res.status(403).json({ success: false, error: 'ローカル環境でのみ利用できます' });
+  }
+
+  try {
+    const users = await configReader.getAllUsers();
+    const options = DEV_LOGIN_ROLES
+      .map(({ role, label }) => {
+        const user = users.find(u => u.role === role);
+        if (!user) return null;
+        return {
+          role,
+          label,
+          email: user.email,
+          displayName: user.castName || user.email,
+        };
+      })
+      .filter(Boolean);
+
+    res.json({ success: true, options });
+  } catch (error) {
+    console.error('Dev login options error:', error.message);
     res.json({ success: false, error: error.message });
   }
 });
@@ -420,6 +460,35 @@ app.put('/api/issues/:id', async (req, res) => {
 });
 
 // =====================================================
+// 店責フィードバックAPI
+// =====================================================
+
+app.post('/api/manager-feedback', async (req, res) => {
+  const { storeCode, targetName, content } = req.body;
+  const requestedDate = String(req.body?.date || '').trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : getBusinessDate();
+
+  if (!storeCode || !content || !String(content).trim()) {
+    return res.json({ success: false, error: '内容を入力してください' });
+  }
+
+  try {
+    await dataStore.createManagerFeedback(
+      date,
+      storeCode,
+      req.user.email,
+      req.user.castName || req.user.displayName || '',
+      String(targetName || '').trim(),
+      String(content).trim()
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Manager feedback save error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
 // ダッシュボードAPI
 // =====================================================
 
@@ -436,7 +505,9 @@ app.get('/api/dashboard/summary', async (req, res) => {
   }
 
   try {
-    const data = await dataStore.getDashboardSummary(from, to, storeCode);
+    const data = await dataStore.getDashboardSummary(from, to, storeCode, {
+      includeManagerFeedback: FEEDBACK_VIEW_ROLES.includes(req.user.role),
+    });
     res.json({ success: true, ...data });
   } catch (error) {
     console.error('Dashboard error:', error);

@@ -301,6 +301,31 @@ async function updateIssue(id, status, feedback) {
 }
 
 // =====================================================
+// Manager Feedback (店責フィードバック)
+// =====================================================
+
+async function createManagerFeedback(date, storeCode, reporterEmail, reporterName, targetName, content) {
+  const rows = await getRows(DATA_SPREADSHEET_ID, 'manager_feedback!A2:A5000');
+  const maxId = rows.reduce((max, r) => Math.max(max, parseInt(r[0]) || 0), 0);
+  const newId = String(maxId + 1);
+
+  await appendRows(DATA_SPREADSHEET_ID, 'manager_feedback!A:I', [[
+    newId,
+    date,
+    storeCode,
+    targetName || '',
+    content,
+    reporterEmail,
+    reporterName || '',
+    '未確認',
+    nowISO(),
+  ]]);
+
+  invalidateCache('manager_feedback');
+  return newId;
+}
+
+// =====================================================
 // Dashboard (ダッシュボード)
 // =====================================================
 
@@ -321,8 +346,9 @@ function setDashCache(key, data) {
   dashboardCache[key] = { data, time: Date.now() };
 }
 
-async function getDashboardSummary(from, to, storeCode) {
-  const cacheKey = `dash_${from}_${to}_${storeCode}`;
+async function getDashboardSummary(from, to, storeCode, options = {}) {
+  const includeManagerFeedback = Boolean(options.includeManagerFeedback);
+  const cacheKey = `dash_${from}_${to}_${storeCode}_${includeManagerFeedback ? 'with_feedback' : 'base'}`;
   const cached = getDashCached(cacheKey, to);
   if (cached) return cached;
 
@@ -332,6 +358,9 @@ async function getDashboardSummary(from, to, storeCode) {
     'self_evaluation!A2:H5000',
     'issues!A2:I5000',
   ];
+  if (includeManagerFeedback) {
+    ranges.push('manager_feedback!A2:I5000');
+  }
   const results = await batchGet(DATA_SPREADSHEET_ID, ranges);
 
   const inRange = (d) => d >= from && d <= to;
@@ -390,7 +419,23 @@ async function getDashboardSummary(from, to, storeCode) {
       createdAt: r[8] || '',
     }));
 
-  const data = { sales, attendance, evaluations, issues };
+  const managerFeedback = includeManagerFeedback
+    ? (results[4].values || [])
+      .filter(r => inRange(r[1]) && matchStore(r[2]))
+      .map(r => ({
+        id: r[0] || '',
+        date: r[1] || '',
+        storeCode: r[2] || '',
+        targetName: r[3] || '',
+        content: r[4] || '',
+        reporterEmail: r[5] || '',
+        reporterName: r[6] || '',
+        status: r[7] || '',
+        createdAt: r[8] || '',
+      }))
+    : [];
+
+  const data = { sales, attendance, evaluations, issues, managerFeedback };
   setDashCache(cacheKey, data);
   return data;
 }
@@ -400,5 +445,6 @@ module.exports = {
   getShureiByDateStore, saveShurei,
   getSelfEvalByDateStore, saveSelfEval,
   getIssuesByStore, createIssue, updateIssue,
+  createManagerFeedback,
   getDashboardSummary,
 };

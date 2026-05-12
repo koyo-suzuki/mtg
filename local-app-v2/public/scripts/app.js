@@ -20,10 +20,15 @@ const State = {
   googleClientId: null,
   // Dashboard
   dashStoreCode: null,
-  dashDateRange: '7',  // preset name
+  dashPeriod: 'thisWeek',
+  dashCompareMode: 'prevWeek',
+  dashBaseDate: null,
   dashDateFrom: null,
   dashDateTo: null,
   dashData: null,
+  dashCompareDateFrom: null,
+  dashCompareDateTo: null,
+  dashCompareData: null,
   dashStores: [],
   dashCharts: {},
 };
@@ -58,7 +63,11 @@ function saveSession(screen) {
     idToken: State.idToken,
     screen: screen || 'login',
     dashStoreCode: State.dashStoreCode,
-    dashDateRange: State.dashDateRange,
+    dashPeriod: State.dashPeriod,
+    dashCompareMode: State.dashCompareMode,
+    dashBaseDate: State.dashBaseDate,
+    dashDateFrom: State.dashDateFrom,
+    dashDateTo: State.dashDateTo,
   };
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
 }
@@ -104,7 +113,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     State.storeName = session.storeName;
     State.businessDate = session.businessDate;
     State.dashStoreCode = session.dashStoreCode || null;
-    State.dashDateRange = session.dashDateRange || '7';
+    State.dashPeriod = normalizeDashPeriod(session.dashPeriod || session.dashDateRange);
+    State.dashCompareMode = session.dashCompareMode || 'prevWeek';
+    State.dashBaseDate = session.dashBaseDate || null;
+    State.dashDateFrom = session.dashDateFrom || null;
+    State.dashDateTo = session.dashDateTo || null;
 
     // 営業日を最新に更新
     try {
@@ -165,7 +178,7 @@ async function initGoogleSignIn() {
     const config = await res.json();
     State.googleClientId = config.googleClientId;
     const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    document.getElementById('devLoginBtn').classList.toggle('hidden', !isLocalhost);
+    await loadDevLoginOptions(isLocalhost);
 
     // Wait for the Google Identity Services library to load
     if (typeof google === 'undefined' || !google.accounts) {
@@ -202,11 +215,46 @@ async function initGoogleSignIn() {
   }
 }
 
-async function onDevLogin() {
+async function loadDevLoginOptions(isLocalhost) {
+  const area = document.getElementById('devLoginArea');
+  const container = document.getElementById('devLoginButtons');
+  area.classList.toggle('hidden', !isLocalhost);
+  container.innerHTML = '';
+  if (!isLocalhost) return;
+
+  try {
+    const result = await fetch('/api/dev-login-options').then(r => r.json());
+    if (!result.success || !result.options?.length) {
+      container.innerHTML = '<p class="text-muted text-sm">ログイン候補がありません</p>';
+      return;
+    }
+
+    result.options.forEach(option => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-outline btn-block dev-login-btn';
+      btn.dataset.role = option.role;
+      btn.innerHTML = `
+        <span>${escapeHtml(option.label)}</span>
+        <span class="dev-login-user">${escapeHtml(option.displayName)}</span>
+      `;
+      btn.addEventListener('click', () => onDevLogin(option.role));
+      container.appendChild(btn);
+    });
+  } catch (e) {
+    container.innerHTML = '<p class="text-muted text-sm">ログイン候補を取得できませんでした</p>';
+  }
+}
+
+async function onDevLogin(role) {
   const loginError = document.getElementById('loginError');
   loginError.classList.add('hidden');
   try {
-    const result = await fetch('/api/dev-login', { method: 'POST' }).then(r => r.json());
+    const result = await fetch('/api/dev-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    }).then(r => r.json());
     if (!result.success) {
       loginError.textContent = result.error || 'ログインに失敗しました';
       loginError.classList.remove('hidden');
@@ -225,7 +273,11 @@ async function onDevLogin() {
       businessDate: session.businessDate,
       idToken: session.idToken,
       dashStoreCode: session.dashStoreCode,
-      dashDateRange: session.dashDateRange,
+      dashPeriod: normalizeDashPeriod(session.dashPeriod || session.dashDateRange),
+      dashCompareMode: session.dashCompareMode || 'prevWeek',
+      dashBaseDate: session.dashBaseDate || null,
+      dashDateFrom: session.dashDateFrom || null,
+      dashDateTo: session.dashDateTo || null,
     });
     saveSession(session.screen);
     await restoreScreen(session.screen);
@@ -358,6 +410,7 @@ function setupEvents() {
       doSaveCastEval(); // スコア選択時は即保存
     });
   });
+  document.getElementById('postManagerFeedback').addEventListener('click', onPostManagerFeedback);
 
   // 店責振り返り（自動保存）
   document.getElementById('managerEvalComment').addEventListener('input', autoSaveManagerEval);
@@ -370,7 +423,6 @@ function setupEvents() {
 
   // ダッシュボード導線（本部画面から）
   document.getElementById('adminDashboard').addEventListener('click', () => showDashboardScreen());
-  document.getElementById('devLoginBtn').addEventListener('click', onDevLogin);
   document.getElementById('dashBack').addEventListener('click', () => {
     // Destroy charts on leave
     Object.values(State.dashCharts).forEach(c => c.destroy());
@@ -382,15 +434,27 @@ function setupEvents() {
     State.dashStoreCode = e.target.value;
     loadDashboardData();
   });
+  document.getElementById('dashBaseDateInput').addEventListener('change', (e) => {
+    State.dashBaseDate = e.target.value || State.businessDate;
+    computeDashDates();
+    loadDashboardData();
+  });
   document.querySelectorAll('.dash-date-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       document.querySelectorAll('.dash-date-btn').forEach(b => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
-      State.dashDateRange = e.currentTarget.dataset.range;
+      State.dashPeriod = e.currentTarget.dataset.period;
       computeDashDates();
       loadDashboardData();
     });
   });
+  document.getElementById('dashCompareSelect').addEventListener('change', (e) => {
+    State.dashCompareMode = e.target.value;
+    computeDashDates();
+    loadDashboardData();
+  });
+  document.getElementById('dashDateFromInput').addEventListener('change', onDashCustomDateChange);
+  document.getElementById('dashDateToInput').addEventListener('change', onDashCustomDateChange);
 
   // 専任画面
   document.getElementById('adminBack').addEventListener('click', showLogin);
@@ -845,6 +909,11 @@ async function loadCastData() {
   const result = await api(`/api/chorei/${State.storeCode}`);
   if (!result.success) return;
 
+  const feedbackDateInput = document.getElementById('managerFeedbackDate');
+  if (feedbackDateInput && !feedbackDateInput.value) {
+    feedbackDateInput.value = State.businessDate || new Date().toISOString().slice(0, 10);
+  }
+
   const myData = result.casts.find(c => c.gmail === State.gmail);
   if (myData) {
     document.getElementById('castGoalInput').value = myData.castGoal || '';
@@ -1064,6 +1133,7 @@ function onTabChange(e) {
   if (tabName === 'dashAttendance') renderDashAttendanceTab();
   if (tabName === 'dashCast') renderDashCastTab();
   if (tabName === 'dashIssues') renderDashIssuesTab();
+  if (tabName === 'dashManagerFeedback') renderDashManagerFeedbackTab();
 }
 
 // =====================================================
@@ -1506,20 +1576,210 @@ async function onIssueStatusChange(selectEl) {
 }
 
 // =====================================================
+// 店責フィードバック
+// =====================================================
+
+async function onPostManagerFeedback() {
+  const feedbackDate = document.getElementById('managerFeedbackDate').value || State.businessDate;
+  const targetName = document.getElementById('managerFeedbackTarget').value.trim();
+  const content = document.getElementById('managerFeedbackContent').value.trim();
+
+  if (!content) {
+    showAlert('castManagerFeedbackAlert', 'error', '内容を入力してください');
+    return;
+  }
+
+  const btn = document.getElementById('postManagerFeedback');
+  startSaving(btn);
+
+  const result = await api('/api/manager-feedback', {
+    method: 'POST',
+    body: JSON.stringify({
+      storeCode: State.storeCode,
+      date: feedbackDate,
+      targetName,
+      content,
+    }),
+  });
+
+  stopSaving(btn);
+
+  if (result.success) {
+    document.getElementById('managerFeedbackTarget').value = '';
+    document.getElementById('managerFeedbackContent').value = '';
+    showAlert('castManagerFeedbackAlert', 'success', '送信しました');
+  } else {
+    showAlert('castManagerFeedbackAlert', 'error', result.error || '送信できませんでした');
+  }
+}
+
+// =====================================================
 // ダッシュボード
 // =====================================================
 
-function computeDashDates() {
-  const today = State.businessDate || new Date().toISOString().slice(0, 10);
-  State.dashDateTo = today;
-  if (State.dashDateRange === 'all') {
-    State.dashDateFrom = '2020-01-01';
-  } else {
-    const days = parseInt(State.dashDateRange) || 7;
-    const d = new Date(today);
-    d.setDate(d.getDate() - days + 1);
-    State.dashDateFrom = d.toISOString().slice(0, 10);
+function normalizeDashPeriod(period) {
+  if (['thisWeek', 'lastWeek', 'thisMonth', 'lastMonth', 'custom'].includes(period)) return period;
+  if (period === '30' || period === '90' || period === 'all') return 'thisMonth';
+  return 'thisWeek';
+}
+
+function parseDashDate(dateStr) {
+  return new Date(dateStr + 'T00:00:00');
+}
+
+function formatDashDate(date) {
+  const d = date instanceof Date ? date : parseDashDate(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function addDashDays(dateStr, days) {
+  const d = parseDashDate(dateStr);
+  d.setDate(d.getDate() + days);
+  return formatDashDate(d);
+}
+
+function startOfDashWeek(dateStr) {
+  const d = parseDashDate(dateStr);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return formatDashDate(d);
+}
+
+function startOfDashMonth(dateStr) {
+  const d = parseDashDate(dateStr);
+  return formatDashDate(new Date(d.getFullYear(), d.getMonth(), 1));
+}
+
+function endOfDashMonth(dateStr) {
+  const d = parseDashDate(dateStr);
+  return formatDashDate(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+}
+
+function addDashMonths(dateStr, months) {
+  const d = parseDashDate(dateStr);
+  const targetYear = d.getFullYear();
+  const targetMonth = d.getMonth() + months;
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  return formatDashDate(new Date(targetYear, targetMonth, Math.min(d.getDate(), lastDay)));
+}
+
+function dashDaysInclusive(from, to) {
+  const ms = parseDashDate(to) - parseDashDate(from);
+  return Math.max(1, Math.round(ms / 86400000) + 1);
+}
+
+function getDashDateRange(from, to) {
+  const dates = [];
+  let d = from;
+  while (d <= to) {
+    dates.push(d);
+    d = addDashDays(d, 1);
   }
+  return dates;
+}
+
+function fmtDashShortDate(dateStr) {
+  const d = parseDashDate(dateStr);
+  const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
+  return `${d.getMonth() + 1}/${d.getDate()}(${weekdays[d.getDay()]})`;
+}
+
+function computeDashDates() {
+  const today = State.dashBaseDate || State.businessDate || new Date().toISOString().slice(0, 10);
+  State.dashBaseDate = today;
+  State.dashPeriod = normalizeDashPeriod(State.dashPeriod);
+
+  if (State.dashPeriod === 'thisWeek') {
+    State.dashDateFrom = startOfDashWeek(today);
+    State.dashDateTo = today;
+  } else if (State.dashPeriod === 'lastWeek') {
+    const thisWeekStart = startOfDashWeek(today);
+    State.dashDateFrom = addDashDays(thisWeekStart, -7);
+    State.dashDateTo = addDashDays(State.dashDateFrom, 6);
+  } else if (State.dashPeriod === 'thisMonth') {
+    State.dashDateFrom = startOfDashMonth(today);
+    State.dashDateTo = today;
+  } else if (State.dashPeriod === 'lastMonth') {
+    const prevMonthDay = addDashMonths(today, -1);
+    State.dashDateFrom = startOfDashMonth(prevMonthDay);
+    State.dashDateTo = endOfDashMonth(prevMonthDay);
+  } else if (State.dashPeriod === 'custom') {
+    State.dashDateFrom = document.getElementById('dashDateFromInput')?.value || State.dashDateFrom || today;
+    State.dashDateTo = document.getElementById('dashDateToInput')?.value || State.dashDateTo || today;
+    if (State.dashDateFrom > State.dashDateTo) {
+      const tmp = State.dashDateFrom;
+      State.dashDateFrom = State.dashDateTo;
+      State.dashDateTo = tmp;
+    }
+  }
+
+  const days = dashDaysInclusive(State.dashDateFrom, State.dashDateTo);
+  if (State.dashCompareMode === 'prevWeek') {
+    State.dashCompareDateFrom = addDashDays(State.dashDateFrom, -7);
+    State.dashCompareDateTo = addDashDays(State.dashDateTo, -7);
+  } else if (State.dashCompareMode === 'prevMonth') {
+    State.dashCompareDateFrom = addDashMonths(State.dashDateFrom, -1);
+    State.dashCompareDateTo = addDashDays(State.dashCompareDateFrom, days - 1);
+  } else {
+    State.dashCompareDateFrom = null;
+    State.dashCompareDateTo = null;
+  }
+
+  updateDashPeriodControls();
+}
+
+function getDashPeriodName() {
+  const names = {
+    thisWeek: '今週',
+    lastWeek: '先週',
+    thisMonth: '当月',
+    lastMonth: '先月',
+    custom: '日付指定',
+  };
+  return names[State.dashPeriod] || '期間';
+}
+
+function getDashCompareLabel() {
+  if (State.dashCompareMode === 'prevWeek') return '前週';
+  if (State.dashCompareMode === 'prevMonth') return '前月同期間';
+  return '';
+}
+
+function updateDashPeriodControls() {
+  document.querySelectorAll('.dash-date-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.period === State.dashPeriod);
+  });
+
+  const compareSelect = document.getElementById('dashCompareSelect');
+  if (compareSelect) compareSelect.value = State.dashCompareMode || 'none';
+
+  const baseDateInput = document.getElementById('dashBaseDateInput');
+  if (baseDateInput) baseDateInput.value = State.dashBaseDate || State.businessDate || '';
+
+  const customRange = document.getElementById('dashCustomRange');
+  if (customRange) customRange.classList.toggle('hidden', State.dashPeriod !== 'custom');
+  const fromInput = document.getElementById('dashDateFromInput');
+  const toInput = document.getElementById('dashDateToInput');
+  if (fromInput) fromInput.value = State.dashDateFrom || '';
+  if (toInput) toInput.value = State.dashDateTo || '';
+
+  const label = document.getElementById('dashPeriodLabel');
+  if (!label || !State.dashDateFrom || !State.dashDateTo) return;
+  const rangeText = `${getDashPeriodName()} ${fmtDashShortDate(State.dashDateFrom)}〜${fmtDashShortDate(State.dashDateTo)}`;
+  const compareText = State.dashCompareMode !== 'none' && State.dashCompareDateFrom
+    ? ` / 比較: ${getDashCompareLabel()} ${fmtDashShortDate(State.dashCompareDateFrom)}〜${fmtDashShortDate(State.dashCompareDateTo)}`
+    : '';
+  label.textContent = `対象日 ${fmtDashShortDate(State.dashBaseDate)} / ${rangeText}${compareText}`;
+}
+
+function onDashCustomDateChange() {
+  State.dashPeriod = 'custom';
+  computeDashDates();
+  loadDashboardData();
 }
 
 async function showDashboardScreen() {
@@ -1550,11 +1810,6 @@ async function showDashboardScreen() {
     State.dashStoreCode = 'all';
   }
 
-  // Restore date range preset button
-  document.querySelectorAll('.dash-date-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.range === State.dashDateRange);
-  });
-
   computeDashDates();
   await loadDashboardData();
   saveSession('dashboard');
@@ -1572,7 +1827,19 @@ async function loadDashboardData() {
     to: State.dashDateTo,
   });
 
-  const result = await api(`/api/dashboard/summary?${params}`);
+  let compareParams = null;
+  if (State.dashCompareMode !== 'none' && State.dashCompareDateFrom && State.dashCompareDateTo) {
+    compareParams = new URLSearchParams({
+      storeCode: State.dashStoreCode || 'all',
+      from: State.dashCompareDateFrom,
+      to: State.dashCompareDateTo,
+    });
+  }
+
+  const [result, compareResult] = await Promise.all([
+    api(`/api/dashboard/summary?${params}`),
+    compareParams ? api(`/api/dashboard/summary?${compareParams}`) : Promise.resolve(null),
+  ]);
   loading.classList.add('hidden');
   tabs.style.opacity = '1';
 
@@ -1582,6 +1849,10 @@ async function loadDashboardData() {
   }
 
   State.dashData = result;
+  State.dashCompareData = compareResult && compareResult.success ? compareResult : null;
+  if (compareResult && !compareResult.success) {
+    showToast('error', compareResult.error || '比較データを取得できませんでした');
+  }
   renderActiveDashTab();
   saveSession('dashboard');
 }
@@ -1594,6 +1865,7 @@ function renderActiveDashTab() {
   else if (name === 'dashAttendance') renderDashAttendanceTab();
   else if (name === 'dashCast') renderDashCastTab();
   else if (name === 'dashIssues') renderDashIssuesTab();
+  else if (name === 'dashManagerFeedback') renderDashManagerFeedbackTab();
 }
 
 // ---- Chart helper ----
@@ -1622,6 +1894,59 @@ function fmtYen(n) {
 function fmtPercent(value) {
   if (value === null || Number.isNaN(value)) return '-';
   return value.toFixed(1) + '%';
+}
+
+function fmtSignedNumber(n) {
+  return (n > 0 ? '+' : '') + n.toLocaleString();
+}
+
+function fmtSignedYen(n) {
+  if (n > 0) return '+' + fmtYen(n);
+  if (n < 0) return '-' + fmtYen(Math.abs(n));
+  return fmtYen(0);
+}
+
+function fmtSignedDecimal(n, digits = 1) {
+  return (n > 0 ? '+' : '') + n.toFixed(digits);
+}
+
+function buildDashDelta(current, compare, formatter = fmtSignedNumber, unit = '') {
+  if (!State.dashCompareData || State.dashCompareMode === 'none' || compare === null || compare === undefined) return '';
+  const delta = current - compare;
+  const pct = compare ? ` / ${fmtPercent((delta / compare) * 100)}` : '';
+  const cls = delta > 0 ? 'dash-metric-up' : delta < 0 ? 'dash-metric-down' : 'is-muted';
+  return `<div class="dash-metric-sub ${cls}">${escapeHtml(getDashCompareLabel())} ${formatter(delta)}${unit}${pct}</div>`;
+}
+
+function aggregateSalesTotal(data) {
+  return (data?.sales || []).reduce((sum, s) => sum + (s.salesToday || 0), 0);
+}
+
+function buildSalesSeries(data, dates) {
+  const byDate = {};
+  (data?.sales || []).forEach(s => {
+    byDate[s.date] = (byDate[s.date] || 0) + (s.salesToday || 0);
+  });
+  return dates.map(d => byDate[d] || 0);
+}
+
+function buildAttendanceSeries(data, dates) {
+  const byDate = {};
+  (data?.attendance || []).forEach(a => {
+    byDate[a.date] = (byDate[a.date] || 0) + 1;
+  });
+  return dates.map(d => byDate[d] || 0);
+}
+
+function buildAverageScoreSeries(data, dates) {
+  const scoreByDate = {};
+  const countByDate = {};
+  (data?.evaluations || []).forEach(e => {
+    if (!scoreByDate[e.date]) { scoreByDate[e.date] = 0; countByDate[e.date] = 0; }
+    scoreByDate[e.date] += e.score;
+    countByDate[e.date]++;
+  });
+  return dates.map(d => countByDate[d] ? +(scoreByDate[d] / countByDate[d]).toFixed(1) : null);
 }
 
 function getDashRelativeDate(baseDate, offsetDays) {
@@ -1802,31 +2127,35 @@ function renderDashSalesTab() {
   const data = State.dashData;
   if (!data) return;
 
-  // Aggregate sales by date
-  const byDate = {};
-  data.sales.forEach(s => {
-    if (!byDate[s.date]) byDate[s.date] = 0;
-    byDate[s.date] += s.salesToday;
-  });
-  const dates = Object.keys(byDate).sort();
-  const values = dates.map(d => byDate[d]);
+  const dates = getDashDateRange(State.dashDateFrom, State.dashDateTo);
+  const compareDates = State.dashCompareData && State.dashCompareDateFrom
+    ? getDashDateRange(State.dashCompareDateFrom, State.dashCompareDateTo)
+    : [];
+  const values = buildSalesSeries(data, dates);
+  const compareValues = State.dashCompareData ? buildSalesSeries(State.dashCompareData, compareDates) : [];
 
   // Metrics
-  const totalSales = values.reduce((a, b) => a + b, 0);
+  const totalSales = aggregateSalesTotal(data);
+  const compareTotalSales = State.dashCompareData ? aggregateSalesTotal(State.dashCompareData) : null;
   const latestMonthlySales = data.sales.length > 0
     ? data.sales.reduce((best, s) => s.date > best.date ? s : best, data.sales[0]).monthlySales
     : 0;
   const avgDaily = dates.length > 0 ? Math.round(totalSales / dates.length) : 0;
+  const compareAvgDaily = compareDates.length > 0 && State.dashCompareData
+    ? Math.round(compareTotalSales / compareDates.length)
+    : null;
 
   document.getElementById('dashSalesMetrics').innerHTML = `
     <div class="dash-metric">
       <div class="dash-metric-label">期間合計</div>
       <div class="dash-metric-value">${fmtYen(totalSales)}</div>
       <div class="dash-metric-sub">${dates.length}日分</div>
+      ${buildDashDelta(totalSales, compareTotalSales, fmtSignedYen)}
     </div>
     <div class="dash-metric">
       <div class="dash-metric-label">日平均</div>
       <div class="dash-metric-value">${fmtYen(avgDaily)}</div>
+      ${buildDashDelta(avgDaily, compareAvgDaily, fmtSignedYen)}
     </div>
     <div class="dash-metric">
       <div class="dash-metric-label">最新月次累計</div>
@@ -1835,25 +2164,38 @@ function renderDashSalesTab() {
   `;
 
   // Line chart
-  const labels = dates.map(d => d.slice(5)); // MM-DD
+  const labels = dates.map(fmtDashShortDate);
+  const datasets = [{
+    label: getDashPeriodName(),
+    data: values,
+    borderColor: '#6C5CE7',
+    backgroundColor: 'rgba(108,92,231,0.1)',
+    fill: true,
+    tension: 0.3,
+    pointRadius: dates.length > 30 ? 0 : 3,
+  }];
+  if (State.dashCompareData) {
+    datasets.push({
+      label: getDashCompareLabel(),
+      data: compareValues,
+      borderColor: '#B2BEC3',
+      backgroundColor: 'rgba(178,190,195,0.08)',
+      borderDash: [6, 4],
+      fill: false,
+      tension: 0.3,
+      pointRadius: compareDates.length > 30 ? 0 : 3,
+    });
+  }
   getOrCreateChart('dashSalesChart', {
     type: 'line',
     data: {
       labels,
-      datasets: [{
-        label: '日次売上',
-        data: values,
-        borderColor: '#6C5CE7',
-        backgroundColor: 'rgba(108,92,231,0.1)',
-        fill: true,
-        tension: 0.3,
-        pointRadius: dates.length > 30 ? 0 : 3,
-      }],
+      datasets,
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: State.dashCompareData ? true : false, position: 'bottom' } },
       scales: {
         y: { beginAtZero: true, ticks: { callback: v => fmtYen(v) } },
       },
@@ -1868,48 +2210,65 @@ function renderDashAttendanceTab() {
   if (!data) return;
 
   // Count by date
-  const byDate = {};
+  const dates = getDashDateRange(State.dashDateFrom, State.dashDateTo);
+  const compareDates = State.dashCompareData && State.dashCompareDateFrom
+    ? getDashDateRange(State.dashCompareDateFrom, State.dashCompareDateTo)
+    : [];
+  const counts = buildAttendanceSeries(data, dates);
+  const compareCounts = State.dashCompareData ? buildAttendanceSeries(State.dashCompareData, compareDates) : [];
   const earlyByDate = {};
-  data.attendance.forEach(a => {
-    byDate[a.date] = (byDate[a.date] || 0) + 1;
-  });
   data.evaluations.forEach(e => {
     if (e.isEarlyLeave) earlyByDate[e.date] = (earlyByDate[e.date] || 0) + 1;
   });
-  const dates = Object.keys(byDate).sort();
-  const counts = dates.map(d => byDate[d]);
   const totalDays = dates.length;
   const avgCount = totalDays > 0 ? (counts.reduce((a, b) => a + b, 0) / totalDays).toFixed(1) : 0;
+  const compareAvgCount = compareDates.length > 0 && State.dashCompareData
+    ? +(compareCounts.reduce((a, b) => a + b, 0) / compareDates.length).toFixed(1)
+    : null;
   const totalEarly = Object.values(earlyByDate).reduce((a, b) => a + b, 0);
+  const compareTotalEarly = State.dashCompareData
+    ? (State.dashCompareData.evaluations || []).filter(e => e.isEarlyLeave).length
+    : null;
 
   document.getElementById('dashAttendanceMetrics').innerHTML = `
     <div class="dash-metric">
       <div class="dash-metric-label">平均出勤人数</div>
       <div class="dash-metric-value">${avgCount}人</div>
       <div class="dash-metric-sub">${totalDays}日分</div>
+      ${buildDashDelta(parseFloat(avgCount), compareAvgCount, n => fmtSignedDecimal(n, 1), '人')}
     </div>
     <div class="dash-metric">
       <div class="dash-metric-label">早退数</div>
       <div class="dash-metric-value">${totalEarly}件</div>
+      ${buildDashDelta(totalEarly, compareTotalEarly, fmtSignedNumber, '件')}
     </div>
   `;
 
   // Bar chart
+  const datasets = [{
+    label: getDashPeriodName(),
+    data: counts,
+    backgroundColor: '#00B894',
+    borderRadius: 4,
+  }];
+  if (State.dashCompareData) {
+    datasets.push({
+      label: getDashCompareLabel(),
+      data: compareCounts,
+      backgroundColor: 'rgba(178,190,195,0.65)',
+      borderRadius: 4,
+    });
+  }
   getOrCreateChart('dashAttendanceChart', {
     type: 'bar',
     data: {
-      labels: dates.map(d => d.slice(5)),
-      datasets: [{
-        label: '出勤人数',
-        data: counts,
-        backgroundColor: '#00B894',
-        borderRadius: 4,
-      }],
+      labels: dates.map(fmtDashShortDate),
+      datasets,
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: State.dashCompareData ? true : false, position: 'bottom' } },
       scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
     },
   });
@@ -1925,7 +2284,7 @@ function renderDashAttendanceTab() {
   let html = '<div class="table-wrapper"><table class="table"><thead><tr><th>日付</th><th>人数</th><th>キャスト</th></tr></thead><tbody>';
   recentDates.forEach(date => {
     const casts = data.attendance.filter(a => a.date === date).map(a => escapeHtml(a.castName));
-    html += `<tr><td>${date.slice(5)}</td><td>${casts.length}</td><td>${casts.join(', ')}</td></tr>`;
+    html += `<tr><td>${fmtDashShortDate(date)}</td><td>${casts.length}</td><td>${casts.join(', ')}</td></tr>`;
   });
   html += '</tbody></table></div>';
   tableContainer.innerHTML = html;
@@ -1975,7 +2334,7 @@ function renderDashCastTab() {
       detailHtml = '<div class="table-wrapper"><table class="table"><thead><tr><th>日付</th><th>スコア</th><th>コメント</th></tr></thead><tbody>';
       cast.details.sort((a, b) => b.date.localeCompare(a.date)).forEach(d => {
         const earlyBadge = d.isEarlyLeave ? ' <span class="badge badge-pickup" style="background:var(--danger-bg);color:var(--danger);">早退</span>' : '';
-        detailHtml += `<tr><td>${d.date.slice(5)}</td><td>${d.score}点${earlyBadge}</td><td>${escapeHtml(d.comment) || '<span class="text-muted">-</span>'}</td></tr>`;
+        detailHtml += `<tr><td>${fmtDashShortDate(d.date)}</td><td>${d.score}点${earlyBadge}</td><td>${escapeHtml(d.comment) || '<span class="text-muted">-</span>'}</td></tr>`;
       });
       detailHtml += '</tbody></table></div>';
     } else {
@@ -2009,34 +2368,44 @@ function renderDashCastTab() {
   });
 
   // Score trend chart
-  const scoreByDate = {};
-  const scoreCounts = {};
-  data.evaluations.forEach(e => {
-    if (!scoreByDate[e.date]) { scoreByDate[e.date] = 0; scoreCounts[e.date] = 0; }
-    scoreByDate[e.date] += e.score;
-    scoreCounts[e.date]++;
-  });
-  const scoreDates = Object.keys(scoreByDate).sort();
-  const avgScores = scoreDates.map(d => +(scoreByDate[d] / scoreCounts[d]).toFixed(1));
+  const scoreDates = getDashDateRange(State.dashDateFrom, State.dashDateTo);
+  const compareScoreDates = State.dashCompareData && State.dashCompareDateFrom
+    ? getDashDateRange(State.dashCompareDateFrom, State.dashCompareDateTo)
+    : [];
+  const avgScores = buildAverageScoreSeries(data, scoreDates);
+  const compareAvgScores = State.dashCompareData ? buildAverageScoreSeries(State.dashCompareData, compareScoreDates) : [];
+  const datasets = [{
+    label: getDashPeriodName(),
+    data: avgScores,
+    borderColor: '#6C5CE7',
+    backgroundColor: 'rgba(108,92,231,0.1)',
+    fill: true,
+    tension: 0.3,
+    pointRadius: scoreDates.length > 30 ? 0 : 3,
+  }];
+  if (State.dashCompareData) {
+    datasets.push({
+      label: getDashCompareLabel(),
+      data: compareAvgScores,
+      borderColor: '#B2BEC3',
+      backgroundColor: 'rgba(178,190,195,0.08)',
+      borderDash: [6, 4],
+      fill: false,
+      tension: 0.3,
+      pointRadius: compareScoreDates.length > 30 ? 0 : 3,
+    });
+  }
 
   getOrCreateChart('dashScoreChart', {
     type: 'line',
     data: {
-      labels: scoreDates.map(d => d.slice(5)),
-      datasets: [{
-        label: '平均スコア',
-        data: avgScores,
-        borderColor: '#6C5CE7',
-        backgroundColor: 'rgba(108,92,231,0.1)',
-        fill: true,
-        tension: 0.3,
-        pointRadius: scoreDates.length > 30 ? 0 : 3,
-      }],
+      labels: scoreDates.map(fmtDashShortDate),
+      datasets,
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: State.dashCompareData ? true : false, position: 'bottom' } },
       scales: { y: { min: 0, max: 10, ticks: { stepSize: 1 } } },
     },
   });
@@ -2109,6 +2478,66 @@ function renderDashIssuesTab() {
         <span class="issue-status ${statusClass}">${escapeHtml(issue.status || '未対応')}</span>
       </div>
       ${issue.feedback ? `<div class="issue-feedback"><strong>対応:</strong> ${escapeHtml(issue.feedback)}</div>` : ''}
+    </div>`;
+  });
+
+  listContainer.innerHTML = html;
+}
+
+// ---- Manager Feedback Tab ----
+
+function renderDashManagerFeedbackTab() {
+  const data = State.dashData;
+  if (!data) return;
+
+  const feedback = data.managerFeedback || [];
+  const targetCount = new Set(feedback.map(f => f.targetName).filter(Boolean)).size;
+  const storeCount = new Set(feedback.map(f => f.storeCode).filter(Boolean)).size;
+
+  document.getElementById('dashManagerFeedbackMetrics').innerHTML = `
+    <div class="dash-metric">
+      <div class="dash-metric-label">件数</div>
+      <div class="dash-metric-value">${feedback.length}</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">対象キャスト</div>
+      <div class="dash-metric-value">${targetCount}</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">店舗</div>
+      <div class="dash-metric-value">${storeCount}</div>
+    </div>
+  `;
+
+  const listContainer = document.getElementById('dashManagerFeedbackList');
+  const sorted = [...feedback]
+    .sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date))
+    .slice(0, 50);
+
+  if (sorted.length === 0) {
+    listContainer.innerHTML = '<p class="text-muted">投稿がありません</p>';
+    return;
+  }
+
+  const storeMap = new Map((State.dashStores || []).map(s => [s.code, s.name]));
+  let html = '';
+  sorted.forEach(item => {
+    const storeName = storeMap.get(item.storeCode) || item.storeCode || '-';
+    const targetName = item.targetName || '対象キャスト未入力';
+    const reporter = item.reporterName || item.reporterEmail || '-';
+    html += `<div class="manager-feedback-item">
+      <div class="manager-feedback-header">
+        <div>
+          <span class="manager-feedback-target">${escapeHtml(targetName)}</span>
+          <span class="manager-feedback-store">${escapeHtml(storeName)}</span>
+        </div>
+        <span class="manager-feedback-date">${escapeHtml(item.date)}</span>
+      </div>
+      <div class="manager-feedback-content">${escapeHtml(item.content)}</div>
+      <div class="manager-feedback-meta">
+        <span>送信者: ${escapeHtml(reporter)}</span>
+        <span>${escapeHtml(item.createdAt ? item.createdAt.slice(11, 16) : '')}</span>
+      </div>
     </div>`;
   });
 

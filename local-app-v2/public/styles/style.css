@@ -174,6 +174,35 @@ select.form-control { appearance: auto; }
 .btn-block { display: flex; width: 100%; }
 .btn-sm { padding: 6px 14px; font-size: 0.8125rem; border-radius: 8px; }
 
+.dev-login-area {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+.dev-login-title {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+.dev-login-buttons {
+  display: grid;
+  gap: 8px;
+}
+.dev-login-btn {
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+}
+.dev-login-user {
+  color: var(--text-light);
+  font-size: 0.75rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* =====================================================
    アラート
    ===================================================== */
@@ -749,6 +778,69 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
 }
 
 /* =====================================================
+   店責フィードバック
+   ===================================================== */
+.feedback-explain {
+  background: var(--primary-bg);
+  color: var(--primary);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.manager-feedback-card textarea.form-control {
+  min-height: 132px;
+}
+.manager-feedback-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--card);
+}
+.manager-feedback-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.manager-feedback-target {
+  font-weight: 800;
+  font-size: 0.9375rem;
+}
+.manager-feedback-store {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 800;
+}
+.manager-feedback-date {
+  color: var(--text-light);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.manager-feedback-content {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  margin-bottom: 10px;
+}
+.manager-feedback-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-light);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* =====================================================
    レスポンシブ
    ===================================================== */
 @media (max-width: 600px) {
@@ -848,10 +940,34 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
   padding: 8px 12px;
   font-size: 0.8125rem;
 }
+.dash-base-date-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.dash-base-date-control .form-control {
+  width: 142px;
+  padding: 8px 10px;
+  font-size: 0.8125rem;
+}
+.dash-compare-select {
+  width: auto;
+  min-width: 150px;
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 0.8125rem;
+}
 .dash-date-presets {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 .dash-date-btn {
   padding: 6px 12px;
@@ -872,6 +988,26 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
 .dash-date-btn:hover:not(.active) {
   border-color: var(--primary-light);
   color: var(--primary);
+}
+.dash-custom-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.dash-custom-range .form-control {
+  padding: 8px 12px;
+  font-size: 0.8125rem;
+}
+.dash-custom-range span {
+  color: var(--text-light);
+  font-weight: 800;
+}
+.dash-period-label {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 /* メトリクスカード */
@@ -1098,9 +1234,14 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
 /* レスポンシブ */
 @media (max-width: 600px) {
   .dash-controls { flex-direction: column; gap: 8px; }
-  .dash-store-select { width: 100%; }
+  .dash-store-select,
+  .dash-compare-select { width: 100%; }
+  .dash-base-date-control { width: 100%; justify-content: space-between; }
+  .dash-base-date-control .form-control { width: 180px; }
   .dash-date-presets { width: 100%; justify-content: space-between; }
   .dash-date-btn { flex: 1; text-align: center; }
+  .dash-custom-range { width: 100%; }
+  .dash-custom-range .form-control { min-width: 0; }
   .dash-chart-wrap { height: 220px; }
   .dash-chart-sm { height: 180px; }
   .dash-metrics { grid-template-columns: 1fr 1fr; }
