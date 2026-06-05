@@ -2052,6 +2052,7 @@ function buildMonthlyProgressData() {
   return {
     month,
     yesterday,
+    salesSource: data.salesSource || 'shurei',
     total: {
       ...total,
       achievementRate: total.monthlyTarget > 0 ? (total.monthlySales / total.monthlyTarget) * 100 : null,
@@ -2072,9 +2073,14 @@ function renderMonthlyProgress(containerId) {
 
   const totalRateClass = getAchievementClass(progress.total.achievementRate);
   const brands = progress.brands.sort((a, b) => b.monthlySales - a.monthlySales);
+  const sourceLabel = progress.salesSource === 'airregi_sales_daily'
+    ? 'Airレジ集計'
+    : progress.salesSource === 'mixed_airregi_shurei'
+      ? 'Airレジ集計 + 終礼暫定'
+      : '終礼暫定';
 
   let html = `
-    <div class="dash-progress-meta">対象月 ${progress.month} / 昨日 ${progress.yesterday}</div>
+    <div class="dash-progress-meta">対象月 ${progress.month} / 昨日 ${progress.yesterday} / 売上 ${sourceLabel}</div>
     <div class="dash-progress-total">
       <div>
         <span class="dash-progress-label">昨日売上</span>

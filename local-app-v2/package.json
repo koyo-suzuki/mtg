@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "init-db": "node scripts/init-db.js"
+    "init-db": "node scripts/init-db.js",
+    "import:airregi-sales": "node scripts/import-airregi-sales-csv.js"
   },
   "dependencies": {
     "cors": "^2.8.6",

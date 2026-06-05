@@ -1,6 +1,7 @@
 const { getRows, appendRows, updateRange, clearRange, batchGet } = require('./sheets-client');
 
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
+const AIRREGI_SALES_RANGE = 'airregi_sales_daily!A2:G10000';
 
 // =====================================================
 // In-memory cache (short TTL for operational data)
@@ -33,6 +34,23 @@ function invalidateCache(prefix) {
 
 function nowISO() {
   return new Date().toISOString();
+}
+
+function parseSheetNumber(value) {
+  if (value === null || value === undefined) return 0;
+  const normalized = String(value).replace(/[¥￥,\s]/g, '');
+  return parseInt(normalized || '0', 10) || 0;
+}
+
+async function getOptionalRows(spreadsheetId, range) {
+  try {
+    return await getRows(spreadsheetId, range);
+  } catch (error) {
+    if (String(error?.message || '').includes('Unable to parse range')) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 async function getChoreiRows() {
@@ -361,20 +379,45 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
   if (includeManagerFeedback) {
     ranges.push('manager_feedback!A2:I5000');
   }
-  const results = await batchGet(DATA_SPREADSHEET_ID, ranges);
+  const [results, airregiRows] = await Promise.all([
+    batchGet(DATA_SPREADSHEET_ID, ranges),
+    getOptionalRows(DATA_SPREADSHEET_ID, AIRREGI_SALES_RANGE),
+  ]);
 
   const inRange = (d) => d >= from && d <= to;
   const matchStore = (s) => storeCode === 'all' || s === storeCode;
 
   // Sales (shurei)
-  const sales = (results[0].values || [])
+  const shureiSales = (results[0].values || [])
     .filter(r => inRange(r[0]) && matchStore(r[1]))
     .map(r => ({
       date: r[0],
       storeCode: r[1],
-      salesToday: parseInt(r[2]) || 0,
-      monthlySales: parseInt(r[3]) || 0,
+      salesToday: parseSheetNumber(r[2]),
+      monthlySales: parseSheetNumber(r[3]),
+      source: 'shurei',
     }));
+
+  const airregiSales = (airregiRows || [])
+    .filter(r => inRange(r[0]) && matchStore(r[1]))
+    .map(r => ({
+      date: r[0],
+      storeCode: r[1],
+      salesToday: parseSheetNumber(r[2]),
+      monthlySales: parseSheetNumber(r[3]),
+      source: 'airregi_sales_daily',
+      syncedAt: r[5] || '',
+      sourceUpdatedAt: r[6] || '',
+    }));
+
+  const airregiKeys = new Set(airregiSales.map(r => `${r.date}\t${r.storeCode}`));
+  const shureiFallbackSales = shureiSales.filter(r => !airregiKeys.has(`${r.date}\t${r.storeCode}`));
+  const sales = airregiSales.length > 0
+    ? [...airregiSales, ...shureiFallbackSales]
+    : shureiSales;
+  const salesSource = airregiSales.length > 0
+    ? (shureiFallbackSales.length > 0 ? 'mixed_airregi_shurei' : 'airregi_sales_daily')
+    : 'shurei';
 
   // Attendance (chorei)
   const attendance = (results[1].values || [])
@@ -435,7 +478,7 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
       }))
     : [];
 
-  const data = { sales, attendance, evaluations, issues, managerFeedback };
+  const data = { sales, salesSource, attendance, evaluations, issues, managerFeedback };
   setDashCache(cacheKey, data);
   return data;
 }
