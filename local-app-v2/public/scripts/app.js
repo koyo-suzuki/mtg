@@ -1048,27 +1048,31 @@ async function loadTopMonthlyProgress(containerId) {
     State.dashStores = storesResult.stores || [];
   }
 
-  const businessDate = State.businessDate || new Date().toISOString().slice(0, 10);
-  const monthStart = businessDate.slice(0, 8) + '01';
+  const businessDate = State.businessDate || formatDashDate(new Date());
+  const cutoffDate = getDashRelativeDate(businessDate, -1);
+  const monthStart = cutoffDate.slice(0, 8) + '01';
   const previousDashData = State.dashData;
   const previousDashStoreCode = State.dashStoreCode;
+  const previousDashBaseDate = State.dashBaseDate;
   const previousDashDateFrom = State.dashDateFrom;
   const previousDashDateTo = State.dashDateTo;
 
   State.dashStoreCode = 'all';
+  State.dashBaseDate = businessDate;
   State.dashDateFrom = monthStart;
-  State.dashDateTo = businessDate;
+  State.dashDateTo = cutoffDate;
 
   const params = new URLSearchParams({
     storeCode: 'all',
     from: monthStart,
-    to: businessDate,
+    to: cutoffDate,
   });
   const result = await api(`/api/dashboard/summary?${params}`);
   if (!result.success) {
     document.getElementById(containerId).innerHTML = '<p class="text-muted">売上進捗を取得できませんでした</p>';
     State.dashData = previousDashData;
     State.dashStoreCode = previousDashStoreCode;
+    State.dashBaseDate = previousDashBaseDate;
     State.dashDateFrom = previousDashDateFrom;
     State.dashDateTo = previousDashDateTo;
     return;
@@ -1079,6 +1083,7 @@ async function loadTopMonthlyProgress(containerId) {
 
   State.dashData = previousDashData;
   State.dashStoreCode = previousDashStoreCode;
+  State.dashBaseDate = previousDashBaseDate;
   State.dashDateFrom = previousDashDateFrom;
   State.dashDateTo = previousDashDateTo;
 }
@@ -1969,9 +1974,9 @@ function buildAverageScoreSeries(data, dates) {
 }
 
 function getDashRelativeDate(baseDate, offsetDays) {
-  const d = new Date(baseDate + 'T00:00:00');
+  const d = parseDashDate(baseDate);
   d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  return formatDashDate(d);
 }
 
 function getAchievementClass(rate) {
@@ -1986,13 +1991,15 @@ function buildMonthlyProgressData() {
   const data = State.dashData;
   if (!data) return null;
 
-  const month = (State.businessDate || State.dashDateTo || new Date().toISOString().slice(0, 10)).slice(0, 7);
-  const yesterday = getDashRelativeDate(State.businessDate || State.dashDateTo, -1);
+  const baseDate = State.dashBaseDate || State.businessDate || State.dashDateTo || formatDashDate(new Date());
+  const yesterday = getDashRelativeDate(baseDate, -1);
+  const month = yesterday.slice(0, 7);
   const storeFilter = State.dashStoreCode || 'all';
   const stores = (State.dashStores || []).filter(store => storeFilter === 'all' || store.code === storeFilter);
   const salesByStore = {};
 
   data.sales.forEach(s => {
+    if (!s.date || s.date > yesterday) return;
     if (!salesByStore[s.storeCode]) {
       salesByStore[s.storeCode] = { yesterdaySales: 0, monthlySales: 0, latestMonthlyDate: '' };
     }
