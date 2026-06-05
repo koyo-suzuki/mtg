@@ -11,6 +11,8 @@ const dataStore = require('./src/sheets/data-store');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const FEEDBACK_VIEW_ROLES = ['executive'];
+const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive', 'cast_manager'];
+const AIRREGI_IMPORT_ROLES = ['senior_manager', 'manager', 'executive'];
 const DEV_LOGIN_ROLES = [
   { role: 'executive', label: '決済者' },
   { role: 'senior_manager', label: '店のトップ' },
@@ -20,8 +22,8 @@ const DEV_LOGIN_ROLES = [
 ];
 
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: false, limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // =====================================================
@@ -492,7 +494,40 @@ app.post('/api/manager-feedback', async (req, res) => {
 // ダッシュボードAPI
 // =====================================================
 
-const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive', 'cast_manager'];
+app.post('/api/airregi-sales/import-csv', async (req, res) => {
+  if (!AIRREGI_IMPORT_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+
+  const storeCode = String(req.body?.storeCode || '').trim();
+  const csvText = String(req.body?.csvText || '');
+  const fixedDate = String(req.body?.date || '').trim();
+  const sourceName = String(req.body?.sourceName || 'browser-upload.csv').trim();
+  const dryRun = Boolean(req.body?.dryRun);
+
+  if (!storeCode || !csvText) {
+    return res.json({ success: false, error: '店舗とCSVファイルを指定してください' });
+  }
+
+  try {
+    const stores = await configReader.getStores();
+    if (!stores.some(store => store.code === storeCode)) {
+      return res.json({ success: false, error: '店舗が見つかりません' });
+    }
+
+    const result = await dataStore.importAirregiSalesCsv({
+      csvText,
+      storeCode,
+      fixedDate,
+      sourceName: `upload:${sourceName}`,
+      dryRun,
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('AirREGI CSV import error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
 
 app.get('/api/dashboard/summary', async (req, res) => {
   if (!DASHBOARD_ROLES.includes(req.user.role)) {

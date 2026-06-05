@@ -1,0 +1,121 @@
+.airregi-import-page .container {
+  max-width: 860px;
+}
+
+.airregi-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 18px;
+}
+
+.airregi-import-header h1 {
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.airregi-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 14px;
+}
+
+.airregi-file-status {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  margin: -4px 0 14px;
+}
+
+.airregi-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.airregi-actions .btn {
+  min-width: 120px;
+}
+
+.airregi-summary-grid {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 140px;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.airregi-summary-grid div {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.airregi-summary-grid span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.airregi-summary-grid strong {
+  font-size: 1rem;
+}
+
+.airregi-warning {
+  background: #FFF7E0;
+  border: 1px solid #F4D27A;
+  border-radius: var(--radius-sm);
+  color: #8B6508;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.airregi-table-wrap {
+  overflow-x: auto;
+}
+
+.airregi-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+}
+
+.airregi-table th,
+.airregi-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 8px;
+  font-size: 0.875rem;
+}
+
+.airregi-table th {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  text-align: left;
+}
+
+.airregi-more {
+  color: var(--text-light);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  margin-top: 10px;
+}
+
+@media (max-width: 640px) {
+  .airregi-form-grid,
+  .airregi-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .airregi-actions {
+    flex-direction: column;
+  }
+
+  .airregi-actions .btn {
+    width: 100%;
+  }
+}

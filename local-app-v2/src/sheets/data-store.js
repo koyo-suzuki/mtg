@@ -1,7 +1,13 @@
 const { getRows, appendRows, updateRange, clearRange, batchGet } = require('./sheets-client');
+const {
+  AIRREGI_SALES_SHEET_NAME,
+  AIRREGI_SALES_HEADER,
+  parseAirregiSalesCsv,
+  toSheetRows: toAirregiSheetRows,
+} = require('../airregi/sales-csv');
 
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
-const AIRREGI_SALES_RANGE = 'airregi_sales_daily!A2:G10000';
+const AIRREGI_SALES_RANGE = `${AIRREGI_SALES_SHEET_NAME}!A2:G10000`;
 
 // =====================================================
 // In-memory cache (short TTL for operational data)
@@ -351,6 +357,10 @@ const dashboardCache = {};
 const DASH_CACHE_TTL = 5 * 60 * 1000;           // 5 min (includes today)
 const DASH_HISTORICAL_CACHE_TTL = 30 * 60 * 1000; // 30 min (past-only ranges)
 
+function invalidateDashboardCache() {
+  Object.keys(dashboardCache).forEach(k => delete dashboardCache[k]);
+}
+
 function getDashCached(key, toDate) {
   const entry = dashboardCache[key];
   if (!entry) return null;
@@ -362,6 +372,40 @@ function getDashCached(key, toDate) {
 
 function setDashCache(key, data) {
   dashboardCache[key] = { data, time: Date.now() };
+}
+
+async function importAirregiSalesCsv(options = {}) {
+  if (!DATA_SPREADSHEET_ID) throw new Error('DATA_SPREADSHEET_ID is not set.');
+
+  const parsed = parseAirregiSalesCsv(options.csvText || '', {
+    storeCode: options.storeCode,
+    fixedDate: options.fixedDate,
+  });
+  if (options.dryRun) return parsed;
+
+  const syncedAt = nowISO();
+  const source = String(options.sourceName || 'csv-upload').trim();
+  const importedKeys = new Set(parsed.rows.map(row => `${row.date}\t${row.storeCode}`));
+  const existingRows = await getRows(DATA_SPREADSHEET_ID, AIRREGI_SALES_RANGE);
+  const keptRows = existingRows.filter(row => !importedKeys.has(`${row[0]}\t${row[1]}`));
+  const nextRows = [
+    AIRREGI_SALES_HEADER,
+    ...keptRows,
+    ...toAirregiSheetRows(parsed.rows, source, syncedAt),
+  ].sort((a, b) => {
+    if (a === AIRREGI_SALES_HEADER) return -1;
+    if (b === AIRREGI_SALES_HEADER) return 1;
+    return String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1]));
+  });
+  const updatedRange = `${AIRREGI_SALES_SHEET_NAME}!A1:G${nextRows.length}`;
+
+  await updateRange(DATA_SPREADSHEET_ID, updatedRange, nextRows);
+  if (existingRows.length + 1 > nextRows.length) {
+    await clearRange(DATA_SPREADSHEET_ID, `${AIRREGI_SALES_SHEET_NAME}!A${nextRows.length + 1}:G${existingRows.length + 1}`);
+  }
+
+  invalidateDashboardCache();
+  return { ...parsed, updatedRange, syncedAt };
 }
 
 async function getDashboardSummary(from, to, storeCode, options = {}) {
@@ -489,5 +533,5 @@ module.exports = {
   getSelfEvalByDateStore, saveSelfEval,
   getIssuesByStore, createIssue, updateIssue,
   createManagerFeedback,
-  getDashboardSummary,
+  getDashboardSummary, importAirregiSalesCsv, invalidateDashboardCache,
 };
