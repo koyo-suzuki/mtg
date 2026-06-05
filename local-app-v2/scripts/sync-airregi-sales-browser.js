@@ -24,12 +24,14 @@ function printUsage() {
   console.log(`
 Usage:
   npm run sync:airregi-sales -- [--year YYYY] [--month M] [--stores store_001,store_002] [--dry-run]
+  npm run sync:airregi-sales -- --this-year [--stores store_001] [--output-json PATH]
   npm run sync:airregi-sales -- --from YYYY-MM --to YYYY-MM [--stores store_001] [--output-json PATH]
   npm run sync:airregi-sales -- --login-only
 
 Options:
   --year YYYY       対象年。省略時は今日のJST年
   --month M         対象月。省略時は今日のJST月
+  --this-year       JSTの今年1月から今月までを同期
   --from YYYY-MM    履歴同期の開始月
   --to YYYY-MM      履歴同期の終了月。省略時は今日のJST月
   --stores LIST     同期する店舗コードをカンマ区切りで指定。省略時は全店舗
@@ -56,7 +58,7 @@ function parseArgs(argv) {
     const token = argv[i];
     if (!token.startsWith('--')) continue;
     const key = token.slice(2);
-    if (['help', 'dry-run', 'headless', 'keep-open', 'login-only', 'collect-only', 'skip-empty'].includes(key)) {
+    if (['help', 'dry-run', 'headless', 'keep-open', 'login-only', 'collect-only', 'skip-empty', 'this-year'].includes(key)) {
       args[key] = true;
     } else {
       args[key] = argv[i + 1];
@@ -102,6 +104,15 @@ function addMonth(period) {
 }
 
 function getTargetPeriods(args) {
+  if (args['this-year']) {
+    const to = getTargetPeriod({});
+    const from = { year: to.year, month: 1 };
+    const periods = [];
+    for (let p = from; comparePeriods(p, to) <= 0; p = addMonth(p)) {
+      periods.push(p);
+    }
+    return periods;
+  }
   if (args.from || args.to) {
     const from = parseYearMonth(args.from, '--from');
     const to = args.to ? parseYearMonth(args.to, '--to') : getTargetPeriod(args);
