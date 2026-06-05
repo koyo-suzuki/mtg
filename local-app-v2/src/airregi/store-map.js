@@ -10,6 +10,10 @@ const AIRREGI_STORE_NAME_CANDIDATES = {
   store_009: ['Revelio OSAKA', 'Revelio大阪', 'レベリオ大阪'],
 };
 
+function normalizeText(value) {
+  return String(value || '').replace(/\s+/g, '').toLowerCase();
+}
+
 function buildAirregiStoreTargets(stores, requestedStoreCodes = []) {
   const requested = new Set(requestedStoreCodes.filter(Boolean));
   return stores
@@ -30,4 +34,5 @@ module.exports = {
   AIRREGI_STORE_NAME_CANDIDATES,
   buildAirregiStoreTargets,
   getMissingStoreCodes,
+  normalizeText,
 };

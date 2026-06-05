@@ -12,6 +12,7 @@ const dataStore = require('../src/sheets/data-store');
 const {
   buildAirregiStoreTargets,
   getMissingStoreCodes,
+  normalizeText,
 } = require('../src/airregi/store-map');
 
 const DEFAULT_CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -118,6 +119,7 @@ async function getPage(context) {
 
 async function looksLikeLoginPage(page) {
   const url = page.url();
+  if (/\/view\/login\/choose-store/.test(url)) return false;
   if (/login|airid|auth/i.test(url) && !/displayPlfSettingStoreSelect|salesList/.test(url)) return true;
   return page.evaluate(() => {
     const body = document.body?.innerText || '';
@@ -129,9 +131,23 @@ async function ensureAirregiSession(page, year, month) {
   await page.goto(storeSelectUrl(year, month), { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(1500);
   if (await looksLikeLoginPage(page)) {
-    await promptEnter('Airレジにログインしてください。ログイン後、店舗選択画面が見える状態にしてください。');
-    await page.goto(storeSelectUrl(year, month), { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(1500);
+    console.log('Airレジログイン待ちです。Chromeでログインしてください。ログイン後は自動で続行します。');
+    await waitForLoggedIn(page, year, month);
+  }
+}
+
+async function waitForLoggedIn(page, year, month) {
+  const deadline = Date.now() + (5 * 60 * 1000);
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(2000);
+    if (!(await looksLikeLoginPage(page))) {
+      return;
+    }
+  }
+  await page.goto(storeSelectUrl(year, month), { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  if (await looksLikeLoginPage(page)) {
+    throw new Error('Airレジログイン待ちがタイムアウトしました。');
   }
 }
 
@@ -148,11 +164,16 @@ async function collectVisibleStoreTexts(page) {
 
 async function clickStoreByCandidates(page, target) {
   const candidates = target.airregiNameCandidates;
-  const result = await page.evaluate(({ candidates }) => {
+  const marker = `airregi-sync-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const result = await page.evaluate(({ candidates, marker }) => {
     const normalize = value => String(value || '').replace(/\s+/g, '').toLowerCase();
     const candidateKeys = candidates.map(normalize);
     const nodes = [...document.querySelectorAll('a,button,label,li,div,span')];
     const choices = [];
+
+    document.querySelectorAll('[data-airregi-sync-target]').forEach(node => {
+      node.removeAttribute('data-airregi-sync-target');
+    });
 
     nodes.forEach(node => {
       const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
@@ -163,29 +184,51 @@ async function clickStoreByCandidates(page, target) {
       const clickable = node.closest('a,button,label,[role="button"],li,div') || node;
       const rect = clickable.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
+      const tagPenalty = ['A', 'BUTTON', 'LABEL'].includes(clickable.tagName) ? 0 : 100;
       choices.push({
+        node: clickable,
         text,
         matched: candidates[matchedIndex],
-        score: (textKey === candidateKeys[matchedIndex] ? 0 : 10) + text.length,
+        score: tagPenalty + (textKey === candidateKeys[matchedIndex] ? 0 : 10) + text.length,
         x: rect.left + rect.width / 2,
         y: rect.top + rect.height / 2,
       });
     });
 
     choices.sort((a, b) => a.score - b.score);
-    return choices[0] || null;
-  }, { candidates });
+    const choice = choices[0];
+    if (!choice) return null;
+    choice.node.setAttribute('data-airregi-sync-target', marker);
+    return {
+      text: choice.text,
+      matched: choice.matched,
+      score: choice.score,
+      x: choice.x,
+      y: choice.y,
+    };
+  }, { candidates, marker });
 
   if (!result) {
     const visibleTexts = await collectVisibleStoreTexts(page);
     throw new Error(`${target.code} ${target.name} のAirレジ店舗が見つかりません。候補: ${candidates.join(' / ')}\n見えている文字: ${visibleTexts.join(' | ')}`);
   }
 
-  await page.mouse.click(result.x, result.y);
-  await page.waitForTimeout(800);
-  await page.mouse.click(result.x, result.y).catch(() => {});
+  const targetLocator = page.locator(`[data-airregi-sync-target="${marker}"]`);
+  await targetLocator.click({ timeout: 10000 });
   await page.waitForTimeout(1200);
+  await targetLocator.click({ timeout: 10000 }).catch(() => {});
+  await page.waitForURL(/airregi\.jp\/CLP|salesList|callbackForPlfLogin/, { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(2500);
   return result;
+}
+
+function matchesAirregiStoreName(pageStoreName, target) {
+  const pageKey = normalizeText(pageStoreName);
+  if (!pageKey) return true;
+  return target.airregiNameCandidates.some(candidate => {
+    const candidateKey = normalizeText(candidate);
+    return pageKey === candidateKey || pageKey.includes(candidateKey) || candidateKey.includes(pageKey);
+  });
 }
 
 async function extractDailySales(page, target, year, month, debugDir) {
@@ -276,14 +319,24 @@ function rowsToCsvText(rows) {
 }
 
 async function syncStore(page, target, year, month, args, debugDir) {
-  await page.goto(storeSelectUrl(year, month), { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(1200);
-  if (await looksLikeLoginPage(page)) {
-    await ensureAirregiSession(page, year, month);
+  let clickResult = null;
+  let extracted = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await page.goto(storeSelectUrl(year, month), { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(1200);
+    if (await looksLikeLoginPage(page)) {
+      await ensureAirregiSession(page, year, month);
+    }
+
+    clickResult = await clickStoreByCandidates(page, target);
+    extracted = await extractDailySales(page, target, year, month, debugDir);
+    if (matchesAirregiStoreName(extracted.storeName, target)) break;
+    if (attempt === 2) {
+      await writeDebugArtifacts(page, debugDir, target);
+      throw new Error(`${target.code} ${target.name} の店舗切替に失敗しました。clicked=${clickResult.matched}, page=${extracted.storeName || 'unknown'}, debug=${debugDir}`);
+    }
   }
 
-  const clickResult = await clickStoreByCandidates(page, target);
-  const extracted = await extractDailySales(page, target, year, month, debugDir);
   const result = await dataStore.importAirregiSalesCsv({
     csvText: rowsToCsvText(extracted.rows),
     storeCode: target.code,
@@ -340,13 +393,14 @@ async function main() {
       process.stdout.write(`[${i + 1}/${targets.length}] ${target.code} ${target.name} ... `);
       const result = await syncStore(page, target, year, month, args, debugDir);
       summaries.push(result);
-      console.log(`${result.rowCount}日 / ${result.dateFrom}..${result.dateTo} / ${result.latestMonthlySales.toLocaleString()}円`);
+      const pageStore = result.pageStoreName ? ` / page:${result.pageStoreName}` : '';
+      console.log(`${result.rowCount}日 / ${result.dateFrom}..${result.dateTo} / ${result.latestMonthlySales.toLocaleString()}円 / clicked:${result.matchedName}${pageStore}`);
     }
 
     console.log('');
     console.log(args['dry-run'] ? '確認完了' : '同期完了');
     summaries.forEach(summary => {
-      console.log(`${summary.target.code}\t${summary.target.name}\t${summary.rowCount}日\t${summary.latestMonthlySales}`);
+      console.log(`${summary.target.code}\t${summary.target.name}\t${summary.rowCount}日\t${summary.latestMonthlySales}\t${summary.matchedName}\t${summary.pageStoreName || ''}`);
     });
   } finally {
     if (!args['keep-open']) {
