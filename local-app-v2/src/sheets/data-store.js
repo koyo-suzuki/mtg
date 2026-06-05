@@ -3,11 +3,10 @@ const {
   AIRREGI_SALES_SHEET_NAME,
   AIRREGI_SALES_HEADER,
   parseAirregiSalesCsv,
-  toSheetRows: toAirregiSheetRows,
 } = require('../airregi/sales-csv');
 
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
-const AIRREGI_SALES_RANGE = `${AIRREGI_SALES_SHEET_NAME}!A2:G10000`;
+const AIRREGI_SALES_RANGE = `${AIRREGI_SALES_SHEET_NAME}!A2:G100000`;
 
 // =====================================================
 // In-memory cache (short TTL for operational data)
@@ -374,24 +373,58 @@ function setDashCache(key, data) {
   dashboardCache[key] = { data, time: Date.now() };
 }
 
-async function importAirregiSalesCsv(options = {}) {
+function summarizeAirregiRows(rows) {
+  const sortedRows = [...rows].sort((a, b) => {
+    return String(a.date).localeCompare(String(b.date)) || String(a.storeCode).localeCompare(String(b.storeCode));
+  });
+  const first = sortedRows[0] || null;
+  const last = sortedRows[sortedRows.length - 1] || null;
+  return {
+    rowCount: sortedRows.length,
+    dateFrom: first ? first.date : '',
+    dateTo: last ? last.date : '',
+    storeCount: new Set(sortedRows.map(row => row.storeCode)).size,
+    latestMonthlySales: last ? Number(last.monthlySales || 0) : 0,
+  };
+}
+
+function toAirregiSheetRows(rows, source, syncedAt) {
+  return rows.map(row => [
+    row.date,
+    row.storeCode,
+    String(row.salesTotal),
+    String(row.monthlySales),
+    String(row.source || source),
+    syncedAt,
+    row.sourceUpdatedAt || '',
+  ]);
+}
+
+async function importAirregiSalesRows(rows, options = {}) {
   if (!DATA_SPREADSHEET_ID) throw new Error('DATA_SPREADSHEET_ID is not set.');
 
-  const parsed = parseAirregiSalesCsv(options.csvText || '', {
-    storeCode: options.storeCode,
-    fixedDate: options.fixedDate,
-  });
-  if (options.dryRun) return parsed;
+  const parsedRows = (rows || [])
+    .map(row => ({
+      date: String(row.date || '').trim(),
+      storeCode: String(row.storeCode || '').trim(),
+      salesTotal: parseSheetNumber(row.salesTotal),
+      monthlySales: parseSheetNumber(row.monthlySales),
+      source: String(row.source || '').trim(),
+      sourceUpdatedAt: String(row.sourceUpdatedAt || '').trim(),
+    }))
+    .filter(row => row.date && row.storeCode);
+  const summary = summarizeAirregiRows(parsedRows);
+  if (options.dryRun) return summary;
 
   const syncedAt = nowISO();
   const source = String(options.sourceName || 'csv-upload').trim();
-  const importedKeys = new Set(parsed.rows.map(row => `${row.date}\t${row.storeCode}`));
+  const importedKeys = new Set(parsedRows.map(row => `${row.date}\t${row.storeCode}`));
   const existingRows = await getRows(DATA_SPREADSHEET_ID, AIRREGI_SALES_RANGE);
   const keptRows = existingRows.filter(row => !importedKeys.has(`${row[0]}\t${row[1]}`));
   const nextRows = [
     AIRREGI_SALES_HEADER,
     ...keptRows,
-    ...toAirregiSheetRows(parsed.rows, source, syncedAt),
+    ...toAirregiSheetRows(parsedRows, source, syncedAt),
   ].sort((a, b) => {
     if (a === AIRREGI_SALES_HEADER) return -1;
     if (b === AIRREGI_SALES_HEADER) return 1;
@@ -405,7 +438,19 @@ async function importAirregiSalesCsv(options = {}) {
   }
 
   invalidateDashboardCache();
-  return { ...parsed, updatedRange, syncedAt };
+  return { ...summary, updatedRange, syncedAt };
+}
+
+async function importAirregiSalesCsv(options = {}) {
+  const parsed = parseAirregiSalesCsv(options.csvText || '', {
+    storeCode: options.storeCode,
+    fixedDate: options.fixedDate,
+  });
+  const result = await importAirregiSalesRows(parsed.rows, {
+    sourceName: options.sourceName,
+    dryRun: options.dryRun,
+  });
+  return { ...parsed, ...result };
 }
 
 async function getDashboardSummary(from, to, storeCode, options = {}) {
@@ -533,5 +578,5 @@ module.exports = {
   getSelfEvalByDateStore, saveSelfEval,
   getIssuesByStore, createIssue, updateIssue,
   createManagerFeedback,
-  getDashboardSummary, importAirregiSalesCsv, invalidateDashboardCache,
+  getDashboardSummary, importAirregiSalesCsv, importAirregiSalesRows, invalidateDashboardCache,
 };

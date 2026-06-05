@@ -9,6 +9,7 @@ const readline = require('readline');
 const { chromium } = require('playwright-core');
 const configReader = require('../src/sheets/config-reader');
 const dataStore = require('../src/sheets/data-store');
+const { parseAirregiSalesCsv } = require('../src/airregi/sales-csv');
 const {
   buildAirregiStoreTargets,
   getMissingStoreCodes,
@@ -23,13 +24,19 @@ function printUsage() {
   console.log(`
 Usage:
   npm run sync:airregi-sales -- [--year YYYY] [--month M] [--stores store_001,store_002] [--dry-run]
+  npm run sync:airregi-sales -- --from YYYY-MM --to YYYY-MM [--stores store_001] [--output-json PATH]
   npm run sync:airregi-sales -- --login-only
 
 Options:
   --year YYYY       対象年。省略時は今日のJST年
   --month M         対象月。省略時は今日のJST月
+  --from YYYY-MM    履歴同期の開始月
+  --to YYYY-MM      履歴同期の終了月。省略時は今日のJST月
   --stores LIST     同期する店舗コードをカンマ区切りで指定。省略時は全店舗
   --dry-run         Airレジから取得するがスプシには書き込まない
+  --collect-only    Airレジから取得してJSON出力だけ行い、スプシには書き込まない
+  --output-json PATH 取得結果をJSONで保存。店舗別並列取得後の一括取り込みに使う
+  --skip-empty      売上行がない月をエラーにせずスキップ
   --login-only      同期せず、Airレジログイン用Chromeだけ開く
   --headless        Chromeを画面なしで起動
   --keep-open       終了時にChromeを閉じない
@@ -49,7 +56,7 @@ function parseArgs(argv) {
     const token = argv[i];
     if (!token.startsWith('--')) continue;
     const key = token.slice(2);
-    if (['help', 'dry-run', 'headless', 'keep-open', 'login-only'].includes(key)) {
+    if (['help', 'dry-run', 'headless', 'keep-open', 'login-only', 'collect-only', 'skip-empty'].includes(key)) {
       args[key] = true;
     } else {
       args[key] = argv[i + 1];
@@ -72,6 +79,42 @@ function getTargetPeriod(args) {
   return { year, month };
 }
 
+function parseYearMonth(value, label) {
+  const match = String(value || '').trim().match(/^(20\d{2})-(\d{1,2})$/);
+  if (!match) throw new Error(`Invalid ${label}: ${value}`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(month) || month < 1 || month > 12) throw new Error(`Invalid ${label}: ${value}`);
+  return { year, month };
+}
+
+function formatYearMonth(period) {
+  return `${period.year}-${String(period.month).padStart(2, '0')}`;
+}
+
+function comparePeriods(a, b) {
+  return (a.year - b.year) || (a.month - b.month);
+}
+
+function addMonth(period) {
+  if (period.month === 12) return { year: period.year + 1, month: 1 };
+  return { year: period.year, month: period.month + 1 };
+}
+
+function getTargetPeriods(args) {
+  if (args.from || args.to) {
+    const from = parseYearMonth(args.from, '--from');
+    const to = args.to ? parseYearMonth(args.to, '--to') : getTargetPeriod(args);
+    if (comparePeriods(from, to) > 0) throw new Error('--from は --to 以前にしてください。');
+    const periods = [];
+    for (let p = from; comparePeriods(p, to) <= 0; p = addMonth(p)) {
+      periods.push(p);
+    }
+    return periods;
+  }
+  return [getTargetPeriod(args)];
+}
+
 function parseStoreCodes(value) {
   return String(value || '')
     .split(',')
@@ -79,13 +122,17 @@ function parseStoreCodes(value) {
     .filter(Boolean);
 }
 
+function routeMonth(month) {
+  return String(month).padStart(2, '0');
+}
+
 function storeSelectUrl(year, month) {
-  const transitionUrl = `https://airregi.jp/CLP//view/salesList/#/year/${year}/month/${month}`;
+  const transitionUrl = `https://airregi.jp/CLP//view/salesList/#/year/${year}/month/${routeMonth(month)}`;
   return `https://airregi.jp/CLP//view/displayPlfSettingStoreSelect/?transitionUrl=${encodeURIComponent(transitionUrl)}`;
 }
 
 function salesListUrl(year, month) {
-  return `https://airregi.jp/CLP//view/salesList/#/year/${year}/month/${month}`;
+  return `https://airregi.jp/CLP//view/salesList/#/year/${year}/month/${routeMonth(month)}`;
 }
 
 async function promptEnter(message) {
@@ -179,7 +226,7 @@ async function clickStoreByCandidates(page, target) {
       const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
       if (!text) return;
       const textKey = normalize(text);
-      const matchedIndex = candidateKeys.findIndex(key => textKey === key || textKey.includes(key));
+      const matchedIndex = candidateKeys.findIndex(key => textKey === key);
       if (matchedIndex < 0) return;
       const clickable = node.closest('a,button,label,[role="button"],li,div') || node;
       const rect = clickable.getBoundingClientRect();
@@ -227,11 +274,14 @@ function matchesAirregiStoreName(pageStoreName, target) {
   if (!pageKey) return true;
   return target.airregiNameCandidates.some(candidate => {
     const candidateKey = normalizeText(candidate);
-    return pageKey === candidateKey || pageKey.includes(candidateKey) || candidateKey.includes(pageKey);
+    return pageKey === candidateKey;
   });
 }
 
-async function extractDailySales(page, target, year, month, debugDir) {
+async function extractDailySales(page, target, year, month, debugDir, options = {}) {
+  if (/\/view\/salesList\//.test(page.url())) {
+    await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  }
   await page.goto(salesListUrl(year, month), { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(3000);
 
@@ -294,6 +344,12 @@ async function extractDailySales(page, target, year, month, debugDir) {
     .map(row => ({ date: row.date, salesTotal: Number(row.salesTotal || 0) }));
 
   if (normalizedRows.length === 0) {
+    if (options.allowEmpty) {
+      return {
+        ...result,
+        rows: [],
+      };
+    }
     await writeDebugArtifacts(page, debugDir, target);
     throw new Error(`${target.code} ${target.name} の日別売上が取得できませんでした。debug: ${debugDir}`);
   }
@@ -318,9 +374,23 @@ function rowsToCsvText(rows) {
   ].join('\n');
 }
 
-async function syncStore(page, target, year, month, args, debugDir) {
+function parseExtractedRows(extractedRows, target, sourceName) {
+  if (!extractedRows.length) return null;
+  const parsed = parseAirregiSalesCsv(rowsToCsvText(extractedRows), {
+    storeCode: target.code,
+  });
+  return {
+    ...parsed,
+    rows: parsed.rows.map(row => ({
+      ...row,
+      source: sourceName,
+    })),
+  };
+}
+
+async function selectStore(page, target, period, args, debugDir) {
+  const { year, month } = period;
   let clickResult = null;
-  let extracted = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     await page.goto(storeSelectUrl(year, month), { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(1200);
@@ -328,28 +398,99 @@ async function syncStore(page, target, year, month, args, debugDir) {
       await ensureAirregiSession(page, year, month);
     }
 
-    clickResult = await clickStoreByCandidates(page, target);
-    extracted = await extractDailySales(page, target, year, month, debugDir);
-    if (matchesAirregiStoreName(extracted.storeName, target)) break;
+    try {
+      clickResult = await clickStoreByCandidates(page, target);
+    } catch (error) {
+      const extracted = await extractDailySales(page, target, year, month, debugDir, { allowEmpty: true });
+      if (matchesAirregiStoreName(extracted.storeName, target)) {
+        return {
+          clickResult: { matched: extracted.storeName || target.airregiNameCandidates[0], alreadySelected: true },
+          extracted,
+        };
+      }
+      throw error;
+    }
+    const extracted = await extractDailySales(page, target, year, month, debugDir, { allowEmpty: true });
+    if (matchesAirregiStoreName(extracted.storeName, target)) {
+      return { clickResult, extracted };
+    }
     if (attempt === 2) {
       await writeDebugArtifacts(page, debugDir, target);
       throw new Error(`${target.code} ${target.name} の店舗切替に失敗しました。clicked=${clickResult.matched}, page=${extracted.storeName || 'unknown'}, debug=${debugDir}`);
     }
   }
+  return { clickResult, extracted: null };
+}
 
-  const result = await dataStore.importAirregiSalesCsv({
-    csvText: rowsToCsvText(extracted.rows),
-    storeCode: target.code,
-    sourceName: `airregi-browser:${clickResult.matched}:${year}-${String(month).padStart(2, '0')}`,
-    dryRun: Boolean(args['dry-run']),
-  });
+async function syncStore(page, target, periods, args, debugDir) {
+  const allowEmpty = Boolean(args['skip-empty'] || periods.length > 1);
+  let clickResult = null;
+  const summaries = [];
+  const rows = [];
+
+  for (let i = 0; i < periods.length; i += 1) {
+    const period = periods[i];
+    const { year, month } = period;
+    let extracted = null;
+    if (i === 0) {
+      const selected = await selectStore(page, target, period, args, debugDir);
+      clickResult = selected.clickResult;
+      extracted = selected.extracted;
+      if (!allowEmpty && extracted.rows.length === 0) {
+        await writeDebugArtifacts(page, debugDir, target);
+        throw new Error(`${target.code} ${target.name} の日別売上が取得できませんでした。debug: ${debugDir}`);
+      }
+    } else {
+      extracted = await extractDailySales(page, target, year, month, debugDir, { allowEmpty });
+      if (!matchesAirregiStoreName(extracted.storeName, target)) {
+        await writeDebugArtifacts(page, debugDir, target);
+        throw new Error(`${target.code} ${target.name} の店舗確認に失敗しました。page=${extracted.storeName || 'unknown'}, debug=${debugDir}`);
+      }
+    }
+
+    const sourceName = `airregi-browser:${clickResult.matched}:${formatYearMonth(period)}`;
+    const parsed = parseExtractedRows(extracted.rows, target, sourceName);
+    const summary = parsed
+      ? {
+          target,
+          period: formatYearMonth(period),
+          matchedName: clickResult.matched,
+          pageStoreName: extracted.storeName,
+          ...parsed,
+        }
+      : {
+          target,
+          period: formatYearMonth(period),
+          matchedName: clickResult.matched,
+          pageStoreName: extracted.storeName,
+          rowCount: 0,
+          dateFrom: '',
+          dateTo: '',
+          latestMonthlySales: 0,
+          rows: [],
+        };
+    summaries.push(summary);
+    rows.push(...summary.rows);
+  }
 
   return {
     target,
     matchedName: clickResult.matched,
-    pageStoreName: extracted.storeName,
-    ...result,
+    pageStoreName: summaries.find(summary => summary.pageStoreName)?.pageStoreName || '',
+    rowCount: rows.length,
+    dateFrom: rows[0]?.date || '',
+    dateTo: rows[rows.length - 1]?.date || '',
+    latestMonthlySales: rows[rows.length - 1]?.monthlySales || 0,
+    summaries,
+    rows,
   };
+}
+
+function writeOutputJson(filePath, payload) {
+  const outputPath = path.resolve(filePath);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
+  return outputPath;
 }
 
 async function main() {
@@ -359,7 +500,9 @@ async function main() {
     return;
   }
 
-  const { year, month } = getTargetPeriod(args);
+  const periods = getTargetPeriods(args);
+  const firstPeriod = periods[0];
+  const lastPeriod = periods[periods.length - 1];
   const debugDir = path.resolve(args['debug-dir'] || DEFAULT_DEBUG_DIR);
   const context = await launchBrowser(args);
   const page = await getPage(context);
@@ -373,7 +516,7 @@ async function main() {
       return;
     }
 
-    await ensureAirregiSession(page, year, month);
+    await ensureAirregiSession(page, firstPeriod.year, firstPeriod.month);
 
     const requestedStoreCodes = parseStoreCodes(args.stores);
     const stores = await configReader.getStores();
@@ -383,24 +526,60 @@ async function main() {
     const targets = buildAirregiStoreTargets(stores, requestedStoreCodes);
     if (!targets.length) throw new Error('同期対象店舗がありません。');
 
-    console.log(`period: ${year}-${String(month).padStart(2, '0')}`);
+    const periodLabel = periods.length === 1
+      ? formatYearMonth(firstPeriod)
+      : `${formatYearMonth(firstPeriod)}..${formatYearMonth(lastPeriod)}`;
+    console.log(`period: ${periodLabel}`);
     console.log(`stores: ${targets.map(store => `${store.code}:${store.name}`).join(', ')}`);
-    if (args['dry-run']) console.log('dry-run: スプシには書き込みません');
+    if (args['dry-run'] || args['collect-only']) console.log('dry-run: スプシには書き込みません');
 
     const summaries = [];
+    const allRows = [];
     for (let i = 0; i < targets.length; i += 1) {
       const target = targets[i];
       process.stdout.write(`[${i + 1}/${targets.length}] ${target.code} ${target.name} ... `);
-      const result = await syncStore(page, target, year, month, args, debugDir);
+      const result = await syncStore(page, target, periods, args, debugDir);
       summaries.push(result);
+      allRows.push(...result.rows);
       const pageStore = result.pageStoreName ? ` / page:${result.pageStoreName}` : '';
-      console.log(`${result.rowCount}日 / ${result.dateFrom}..${result.dateTo} / ${result.latestMonthlySales.toLocaleString()}円 / clicked:${result.matchedName}${pageStore}`);
+      console.log(`${result.rowCount}行 / ${result.dateFrom || '-'}..${result.dateTo || '-'} / ${result.latestMonthlySales.toLocaleString()}円 / clicked:${result.matchedName}${pageStore}`);
+    }
+
+    let importResult = null;
+    if (args['output-json']) {
+      const outputPath = writeOutputJson(args['output-json'], {
+        generatedAt: new Date().toISOString(),
+        period: periodLabel,
+        stores: targets.map(target => ({ code: target.code, name: target.name })),
+        summaries: summaries.map(summary => ({
+          storeCode: summary.target.code,
+          storeName: summary.target.name,
+          rowCount: summary.rowCount,
+          dateFrom: summary.dateFrom,
+          dateTo: summary.dateTo,
+          latestMonthlySales: summary.latestMonthlySales,
+          matchedName: summary.matchedName,
+          pageStoreName: summary.pageStoreName,
+        })),
+        rows: allRows,
+      });
+      console.log(`output-json: ${outputPath}`);
+    }
+
+    if (!args['dry-run'] && !args['collect-only']) {
+      importResult = await dataStore.importAirregiSalesRows(allRows, {
+        sourceName: 'airregi-browser',
+      });
     }
 
     console.log('');
-    console.log(args['dry-run'] ? '確認完了' : '同期完了');
+    console.log(args['dry-run'] || args['collect-only'] ? '確認完了' : '同期完了');
+    if (importResult) {
+      console.log(`updated: ${importResult.updatedRange}`);
+      console.log(`written_rows: ${importResult.rowCount}`);
+    }
     summaries.forEach(summary => {
-      console.log(`${summary.target.code}\t${summary.target.name}\t${summary.rowCount}日\t${summary.latestMonthlySales}\t${summary.matchedName}\t${summary.pageStoreName || ''}`);
+      console.log(`${summary.target.code}\t${summary.target.name}\t${summary.rowCount}行\t${summary.latestMonthlySales}\t${summary.matchedName}\t${summary.pageStoreName || ''}`);
     });
   } finally {
     if (!args['keep-open']) {
