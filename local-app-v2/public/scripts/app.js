@@ -1139,8 +1139,6 @@ function onTabChange(e) {
   if (tabName === 'castIssues') loadIssues('cast');
   // Dashboard tabs
   if (tabName === 'dashSales') renderDashSalesTab();
-  if (tabName === 'dashAttendance') renderDashAttendanceTab();
-  if (tabName === 'dashCast') renderDashCastTab();
   if (tabName === 'dashIssues') renderDashIssuesTab();
   if (tabName === 'dashManagerFeedback') renderDashManagerFeedbackTab();
 }
@@ -1886,8 +1884,6 @@ function renderActiveDashTab() {
     return;
   }
   if (name === 'dashSales') renderDashSalesTab();
-  else if (name === 'dashAttendance') renderDashAttendanceTab();
-  else if (name === 'dashCast') renderDashCastTab();
   else if (name === 'dashIssues') renderDashIssuesTab();
   else if (name === 'dashManagerFeedback') renderDashManagerFeedbackTab();
 }
@@ -1952,25 +1948,6 @@ function buildSalesSeries(data, dates) {
     byDate[s.date] = (byDate[s.date] || 0) + (s.salesToday || 0);
   });
   return dates.map(d => byDate[d] || 0);
-}
-
-function buildAttendanceSeries(data, dates) {
-  const byDate = {};
-  (data?.attendance || []).forEach(a => {
-    byDate[a.date] = (byDate[a.date] || 0) + 1;
-  });
-  return dates.map(d => byDate[d] || 0);
-}
-
-function buildAverageScoreSeries(data, dates) {
-  const scoreByDate = {};
-  const countByDate = {};
-  (data?.evaluations || []).forEach(e => {
-    if (!scoreByDate[e.date]) { scoreByDate[e.date] = 0; countByDate[e.date] = 0; }
-    scoreByDate[e.date] += e.score;
-    countByDate[e.date]++;
-  });
-  return dates.map(d => countByDate[d] ? +(scoreByDate[d] / countByDate[d]).toFixed(1) : null);
 }
 
 function getDashRelativeDate(baseDate, offsetDays) {
@@ -2231,214 +2208,6 @@ function renderDashSalesTab() {
       scales: {
         y: { beginAtZero: true, ticks: { callback: v => fmtYen(v) } },
       },
-    },
-  });
-}
-
-// ---- Attendance Tab ----
-
-function renderDashAttendanceTab() {
-  const data = State.dashData;
-  if (!data) return;
-
-  // Count by date
-  const dates = getDashDateRange(State.dashDateFrom, State.dashDateTo);
-  const compareDates = State.dashCompareData && State.dashCompareDateFrom
-    ? getDashDateRange(State.dashCompareDateFrom, State.dashCompareDateTo)
-    : [];
-  const counts = buildAttendanceSeries(data, dates);
-  const compareCounts = State.dashCompareData ? buildAttendanceSeries(State.dashCompareData, compareDates) : [];
-  const earlyByDate = {};
-  data.evaluations.forEach(e => {
-    if (e.isEarlyLeave) earlyByDate[e.date] = (earlyByDate[e.date] || 0) + 1;
-  });
-  const totalDays = dates.length;
-  const avgCount = totalDays > 0 ? (counts.reduce((a, b) => a + b, 0) / totalDays).toFixed(1) : 0;
-  const compareAvgCount = compareDates.length > 0 && State.dashCompareData
-    ? +(compareCounts.reduce((a, b) => a + b, 0) / compareDates.length).toFixed(1)
-    : null;
-  const totalEarly = Object.values(earlyByDate).reduce((a, b) => a + b, 0);
-  const compareTotalEarly = State.dashCompareData
-    ? (State.dashCompareData.evaluations || []).filter(e => e.isEarlyLeave).length
-    : null;
-
-  document.getElementById('dashAttendanceMetrics').innerHTML = `
-    <div class="dash-metric">
-      <div class="dash-metric-label">平均出勤人数</div>
-      <div class="dash-metric-value">${avgCount}人</div>
-      <div class="dash-metric-sub">${totalDays}日分</div>
-      ${buildDashDelta(parseFloat(avgCount), compareAvgCount, n => fmtSignedDecimal(n, 1), '人')}
-    </div>
-    <div class="dash-metric">
-      <div class="dash-metric-label">早退数</div>
-      <div class="dash-metric-value">${totalEarly}件</div>
-      ${buildDashDelta(totalEarly, compareTotalEarly, fmtSignedNumber, '件')}
-    </div>
-  `;
-
-  // Bar chart
-  const datasets = [{
-    label: getDashPeriodName(),
-    data: counts,
-    backgroundColor: '#00B894',
-    borderRadius: 4,
-  }];
-  if (State.dashCompareData) {
-    datasets.push({
-      label: getDashCompareLabel(),
-      data: compareCounts,
-      backgroundColor: 'rgba(178,190,195,0.65)',
-      borderRadius: 4,
-    });
-  }
-  getOrCreateChart('dashAttendanceChart', {
-    type: 'bar',
-    data: {
-      labels: dates.map(fmtDashShortDate),
-      datasets,
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: State.dashCompareData ? true : false, position: 'bottom' } },
-      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
-    },
-  });
-
-  // Attendance table (recent 14 days max)
-  const recentDates = dates.slice(-14).reverse();
-  const tableContainer = document.getElementById('dashAttendanceTable');
-  if (recentDates.length === 0) {
-    tableContainer.innerHTML = '<p class="text-muted">データがありません</p>';
-    return;
-  }
-
-  let html = '<div class="table-wrapper"><table class="table"><thead><tr><th>日付</th><th>人数</th><th>キャスト</th></tr></thead><tbody>';
-  recentDates.forEach(date => {
-    const casts = data.attendance.filter(a => a.date === date).map(a => escapeHtml(a.castName));
-    html += `<tr><td>${fmtDashShortDate(date)}</td><td>${casts.length}</td><td>${casts.join(', ')}</td></tr>`;
-  });
-  html += '</tbody></table></div>';
-  tableContainer.innerHTML = html;
-}
-
-// ---- Cast Tab ----
-
-function renderDashCastTab() {
-  const data = State.dashData;
-  if (!data) return;
-
-  // Aggregate per cast
-  const castMap = {};
-  data.attendance.forEach(a => {
-    if (!castMap[a.gmail]) castMap[a.gmail] = { name: a.castName, gmail: a.gmail, days: 0, visitors: 0, latestSales: 0, latestDrinks: 0, latestDate: '', scores: [], details: [] };
-    castMap[a.gmail].days++;
-    castMap[a.gmail].visitors += a.expectedVisitors;
-    // 最新日付の売上・ドリンクを保持
-    if (a.date >= castMap[a.gmail].latestDate) {
-      castMap[a.gmail].latestDate = a.date;
-      castMap[a.gmail].latestSales = a.monthlySales || 0;
-      castMap[a.gmail].latestDrinks = a.monthlyDrinks || 0;
-    }
-  });
-  data.evaluations.forEach(e => {
-    if (!castMap[e.gmail]) castMap[e.gmail] = { name: e.castName, gmail: e.gmail, days: 0, visitors: 0, latestSales: 0, latestDrinks: 0, latestDate: '', scores: [], details: [] };
-    castMap[e.gmail].scores.push(e.score);
-    castMap[e.gmail].details.push({ date: e.date, score: e.score, comment: e.comment, isEarlyLeave: e.isEarlyLeave });
-  });
-
-  const casts = Object.values(castMap).sort((a, b) => b.days - a.days);
-  const container = document.getElementById('dashCastSummary');
-
-  if (casts.length === 0) {
-    container.innerHTML = '<p class="text-muted">データがありません</p>';
-    return;
-  }
-
-  let html = '';
-  casts.forEach((cast, i) => {
-    const avgScore = cast.scores.length > 0
-      ? (cast.scores.reduce((a, b) => a + b, 0) / cast.scores.length).toFixed(1)
-      : '-';
-
-    let detailHtml = '';
-    if (cast.details.length > 0) {
-      detailHtml = '<div class="table-wrapper"><table class="table"><thead><tr><th>日付</th><th>スコア</th><th>コメント</th></tr></thead><tbody>';
-      cast.details.sort((a, b) => b.date.localeCompare(a.date)).forEach(d => {
-        const earlyBadge = d.isEarlyLeave ? ' <span class="badge badge-pickup" style="background:var(--danger-bg);color:var(--danger);">早退</span>' : '';
-        detailHtml += `<tr><td>${fmtDashShortDate(d.date)}</td><td>${d.score}点${earlyBadge}</td><td>${escapeHtml(d.comment) || '<span class="text-muted">-</span>'}</td></tr>`;
-      });
-      detailHtml += '</tbody></table></div>';
-    } else {
-      detailHtml = '<p class="text-muted" style="padding:8px 0;">評価データなし</p>';
-    }
-
-    html += `
-      <div class="dash-cast-row">
-        <div class="dash-cast-header" data-cast-idx="${i}">
-          <span class="dash-cast-name">${escapeHtml(cast.name)}</span>
-          <div class="dash-cast-stats">
-            <span>売上<span class="dash-cast-stat-val">${fmtYen(cast.latestSales)}</span></span>
-            <span>🍸<span class="dash-cast-stat-val">${cast.latestDrinks}</span></span>
-            <span><span class="dash-cast-stat-val">${cast.days}</span>日</span>
-            <span>評価<span class="dash-cast-stat-val">${avgScore}</span></span>
-          </div>
-        </div>
-        <div class="dash-cast-detail" id="dashCastDetail${i}">${detailHtml}</div>
-      </div>`;
-  });
-
-  container.innerHTML = html;
-
-  // Toggle expand
-  container.querySelectorAll('.dash-cast-header').forEach(header => {
-    header.addEventListener('click', () => {
-      const idx = header.dataset.castIdx;
-      const detail = document.getElementById('dashCastDetail' + idx);
-      detail.classList.toggle('expanded');
-    });
-  });
-
-  // Score trend chart
-  const scoreDates = getDashDateRange(State.dashDateFrom, State.dashDateTo);
-  const compareScoreDates = State.dashCompareData && State.dashCompareDateFrom
-    ? getDashDateRange(State.dashCompareDateFrom, State.dashCompareDateTo)
-    : [];
-  const avgScores = buildAverageScoreSeries(data, scoreDates);
-  const compareAvgScores = State.dashCompareData ? buildAverageScoreSeries(State.dashCompareData, compareScoreDates) : [];
-  const datasets = [{
-    label: getDashPeriodName(),
-    data: avgScores,
-    borderColor: '#6C5CE7',
-    backgroundColor: 'rgba(108,92,231,0.1)',
-    fill: true,
-    tension: 0.3,
-    pointRadius: scoreDates.length > 30 ? 0 : 3,
-  }];
-  if (State.dashCompareData) {
-    datasets.push({
-      label: getDashCompareLabel(),
-      data: compareAvgScores,
-      borderColor: '#B2BEC3',
-      backgroundColor: 'rgba(178,190,195,0.08)',
-      borderDash: [6, 4],
-      fill: false,
-      tension: 0.3,
-      pointRadius: compareScoreDates.length > 30 ? 0 : 3,
-    });
-  }
-
-  getOrCreateChart('dashScoreChart', {
-    type: 'line',
-    data: {
-      labels: scoreDates.map(fmtDashShortDate),
-      datasets,
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: State.dashCompareData ? true : false, position: 'bottom' } },
-      scales: { y: { min: 0, max: 10, ticks: { stepSize: 1 } } },
     },
   });
 }

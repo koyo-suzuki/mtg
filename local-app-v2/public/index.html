@@ -450,8 +450,6 @@
         <!-- タブ -->
         <div class="tabs" id="dashTabs">
           <div class="tab active" data-tab="dashSales">売上</div>
-          <div class="tab" data-tab="dashAttendance">出勤</div>
-          <div class="tab" data-tab="dashCast">キャスト</div>
           <div class="tab" data-tab="dashIssues">伝言板</div>
           <div class="tab" data-tab="dashManagerFeedback">店責FB</div>
         </div>
@@ -462,31 +460,6 @@
           <div class="card">
             <div class="card-title">日次売上</div>
             <div class="dash-chart-wrap"><canvas id="dashSalesChart"></canvas></div>
-          </div>
-        </div>
-
-        <!-- 出勤タブ -->
-        <div id="dashAttendanceTab" class="tab-content">
-          <div id="dashAttendanceMetrics" class="dash-metrics"></div>
-          <div class="card">
-            <div class="card-title">日次出勤人数</div>
-            <div class="dash-chart-wrap"><canvas id="dashAttendanceChart"></canvas></div>
-          </div>
-          <div class="card">
-            <div class="card-title">出勤詳細</div>
-            <div id="dashAttendanceTable"></div>
-          </div>
-        </div>
-
-        <!-- キャストタブ -->
-        <div id="dashCastTab" class="tab-content">
-          <div class="card">
-            <div class="card-title">キャスト別サマリー</div>
-            <div id="dashCastSummary"></div>
-          </div>
-          <div class="card">
-            <div class="card-title">平均自己評価スコア推移</div>
-            <div class="dash-chart-wrap"><canvas id="dashScoreChart"></canvas></div>
           </div>
         </div>
 
