@@ -7,7 +7,8 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "init-db": "node scripts/init-db.js",
-    "import:airregi-sales": "node scripts/import-airregi-sales-csv.js"
+    "import:airregi-sales": "node scripts/import-airregi-sales-csv.js",
+    "sync:airregi-sales": "node scripts/sync-airregi-sales-browser.js"
   },
   "dependencies": {
     "cors": "^2.8.6",
@@ -17,7 +18,8 @@
     "googleapis": "^171.4.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "playwright-core": "^1.60.0"
   },
   "engines": {
     "node": "20.x"
