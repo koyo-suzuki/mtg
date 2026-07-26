@@ -100,6 +100,7 @@
           <div class="tab" data-tab="shurei">終礼</div>
           <div class="tab" data-tab="managerPickup">送迎</div>
           <div class="tab" data-tab="managerIssues">伝言板</div>
+          <div class="tab" data-tab="managerRemoteOrders">遠隔注文</div>
         </div>
 
         <!-- 朝礼タブ -->
@@ -209,6 +210,18 @@
             </div>
 
             <div id="managerIssuesList"></div>
+          </div>
+        </div>
+
+        <!-- 遠隔注文タブ（店舗閲覧用） -->
+        <div id="managerRemoteOrdersTab" class="tab-content">
+          <div class="card">
+            <div class="card-title">本日の確認済み遠隔注文</div>
+            <p class="text-sm text-muted">営業日の区切りは午前1時です。</p>
+            <div id="managerRemoteOrdersAlert" class="alert hidden"></div>
+            <div id="managerRemoteOrdersList">
+              <p class="text-muted">読み込み中...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -397,9 +410,52 @@
             <span class="store-item-name">ダッシュボード</span>
             <span class="store-item-arrow">&rarr;</span>
           </div>
+          <div class="store-item mt-10" id="adminRemoteOrders" style="border-left:3px solid var(--primary);">
+            <span class="store-item-name">遠隔注文を確認</span>
+            <span class="store-item-arrow">&rarr;</span>
+          </div>
         </div>
 
         <button id="adminBack" class="btn btn-text btn-block">戻る</button>
+      </div>
+    </div>
+
+    <!-- ========== 遠隔注文確認画面 ========== -->
+    <div id="remoteOrdersScreen" class="screen hidden">
+      <div class="container">
+        <div class="header">
+          <div class="row">
+            <div class="col">
+              <h1>遠隔注文確認</h1>
+              <span class="text-sm text-muted">明細確認後に店舗と入金を確定し、表示OKにしてください。</span>
+            </div>
+            <div class="col text-right">
+              <button id="remoteOrdersBack" class="btn btn-outline btn-sm">戻る</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card remote-order-controls">
+          <label class="form-group">
+            <span>営業日（午前1時区切り）</span>
+            <input type="date" id="remoteOrdersDate" class="form-control">
+          </label>
+          <label class="form-group">
+            <span>表示</span>
+            <select id="remoteOrdersStatusFilter" class="form-control">
+              <option value="pending">確認待ちのみ</option>
+              <option value="all">すべて</option>
+              <option value="published">表示済みのみ</option>
+            </select>
+          </label>
+          <button id="remoteOrdersRefresh" class="btn btn-secondary">再読み込み</button>
+        </div>
+
+        <div id="remoteOrdersAlert" class="alert hidden"></div>
+        <div id="remoteOrdersSummary" class="remote-order-summary"></div>
+        <div id="remoteOrdersList">
+          <p class="text-muted">読み込み中...</p>
+        </div>
       </div>
     </div>
 

@@ -47,6 +47,11 @@ function parseSheetNumber(value) {
   return parseInt(normalized || '0', 10) || 0;
 }
 
+function parseSheetBoolean(value) {
+  if (value === true) return true;
+  return ['true', '1', 'yes', 'checked'].includes(String(value || '').trim().toLowerCase());
+}
+
 async function getOptionalRows(spreadsheetId, range) {
   try {
     return await getRows(spreadsheetId, range);
@@ -349,6 +354,153 @@ async function createManagerFeedback(date, storeCode, reporterEmail, reporterNam
 }
 
 // =====================================================
+// Remote orders (遠隔注文)
+// =====================================================
+
+function mapRemoteOrderItem(row) {
+  return {
+    slipKey: row[0] || '',
+    wixOrderId: row[1] || '',
+    orderNumber: row[2] || '',
+    lineItemId: row[3] || '',
+    lineNo: parseInt(row[4], 10) || 0,
+    businessDate: row[5] || '',
+    orderedAt: row[6] || '',
+    storeCode: row[7] || '',
+    storeRaw: row[8] || '',
+    productName: row[9] || '',
+    variantName: row[10] || '',
+    castName: row[11] || '',
+    quantity: parseSheetNumber(row[12]),
+    unitPrice: parseSheetNumber(row[13]),
+    lineSubtotal: parseSheetNumber(row[14]),
+    currency: row[15] || 'JPY',
+    customerComment: row[16] || '',
+    mappingStatus: row[17] || '',
+  };
+}
+
+function mapRemoteStoreSlip(row) {
+  return {
+    slipKey: row[0] || '',
+    wixOrderId: row[1] || '',
+    orderNumber: row[2] || '',
+    businessDate: row[3] || '',
+    orderedAt: row[4] || '',
+    storeCode: row[5] || '',
+    storeRaw: row[6] || '',
+    itemCount: parseSheetNumber(row[7]),
+    itemTotal: parseSheetNumber(row[8]),
+    currency: row[9] || 'JPY',
+    paymentStatus: row[10] || '',
+    paymentVerified: parseSheetBoolean(row[11]),
+    displayOk: parseSheetBoolean(row[12]),
+    assignmentStatus: row[13] || '',
+    confirmedBy: row[14] || '',
+    confirmedAt: row[15] || '',
+    cancelStatus: row[16] || '',
+    sharedToStore: parseSheetBoolean(row[17]),
+    wixUpdatedAt: row[18] || '',
+    receivedAt: row[19] || '',
+  };
+}
+
+async function getRemoteOrderData() {
+  const ranges = [
+    'remote_order_items!A2:U10000',
+    'remote_store_slips!A2:T10000',
+  ];
+  const results = await batchGet(DATA_SPREADSHEET_ID, ranges);
+  const items = (results[0]?.values || []).map(mapRemoteOrderItem);
+  const slips = (results[1]?.values || []).map(mapRemoteStoreSlip);
+  const itemsBySlip = items.reduce((grouped, item) => {
+    if (!grouped[item.slipKey]) grouped[item.slipKey] = [];
+    grouped[item.slipKey].push(item);
+    return grouped;
+  }, {});
+
+  return slips.map(slip => ({
+    ...slip,
+    items: (itemsBySlip[slip.slipKey] || [])
+      .sort((a, b) => a.lineNo - b.lineNo),
+  }));
+}
+
+async function getRemoteOrdersForReview(businessDate) {
+  const orders = await getRemoteOrderData();
+  return orders
+    .filter(order => !businessDate || order.businessDate === businessDate)
+    .sort((a, b) => String(b.orderedAt).localeCompare(String(a.orderedAt)));
+}
+
+async function getPublishedRemoteOrders(businessDate, storeCode) {
+  const orders = await getRemoteOrderData();
+  return orders
+    .filter(order =>
+      order.businessDate === businessDate &&
+      order.storeCode === storeCode &&
+      order.paymentVerified &&
+      order.displayOk &&
+      !order.cancelStatus
+    )
+    .sort((a, b) => String(b.orderedAt).localeCompare(String(a.orderedAt)));
+}
+
+async function updateRemoteOrderReview(slipKey, review) {
+  const [slipRows, itemRows] = await Promise.all([
+    getRows(DATA_SPREADSHEET_ID, 'remote_store_slips!A2:T10000'),
+    getRows(DATA_SPREADSHEET_ID, 'remote_order_items!A2:U10000'),
+  ]);
+  const slipIndex = slipRows.findIndex(row => row[0] === slipKey);
+  if (slipIndex === -1) throw new Error('対象の遠隔注文が見つかりません');
+
+  const storeCode = String(review.storeCode || '').trim();
+  const paymentVerified = Boolean(review.paymentVerified);
+  const displayOk = Boolean(review.displayOk);
+  if (displayOk && !storeCode) {
+    throw new Error('店舗を選択してから表示OKにしてください');
+  }
+  if (displayOk && !paymentVerified) {
+    throw new Error('入金確認後に表示OKにしてください');
+  }
+
+  const slipRow = slipRows[slipIndex];
+  slipRow[5] = storeCode;
+  slipRow[11] = paymentVerified;
+  slipRow[12] = displayOk;
+  slipRow[13] = displayOk ? '公開済み' : (storeCode ? '確認中' : '確認待ち');
+  slipRow[14] = displayOk ? String(review.confirmedBy || '') : '';
+  slipRow[15] = displayOk ? nowISO() : '';
+
+  const writes = [
+    updateRange(
+      DATA_SPREADSHEET_ID,
+      `remote_store_slips!A${slipIndex + 2}:T${slipIndex + 2}`,
+      [slipRow]
+    ),
+  ];
+
+  itemRows.forEach((row, index) => {
+    if (row[0] !== slipKey) return;
+    row[7] = storeCode;
+    row[17] = storeCode ? '手動割当済み' : '確認待ち';
+    writes.push(
+      updateRange(
+        DATA_SPREADSHEET_ID,
+        `remote_order_items!A${index + 2}:U${index + 2}`,
+        [row]
+      )
+    );
+  });
+
+  await Promise.all(writes);
+  return {
+    ...mapRemoteStoreSlip(slipRow),
+    itemsUpdated: Math.max(0, writes.length - 1),
+  };
+}
+
+// =====================================================
 // Dashboard (ダッシュボード)
 // =====================================================
 
@@ -578,5 +730,6 @@ module.exports = {
   getSelfEvalByDateStore, saveSelfEval,
   getIssuesByStore, createIssue, updateIssue,
   createManagerFeedback,
+  getRemoteOrdersForReview, getPublishedRemoteOrders, updateRemoteOrderReview,
   getDashboardSummary, importAirregiSalesCsv, importAirregiSalesRows, invalidateDashboardCache,
 };

@@ -31,6 +31,9 @@ const State = {
   dashCompareData: null,
   dashStores: [],
   dashCharts: {},
+  // Remote orders
+  remoteOrders: [],
+  remoteOrderStores: [],
 };
 
 // =====================================================
@@ -155,6 +158,9 @@ async function restoreScreen(screen) {
       break;
     case 'dashboard':
       await showDashboardScreen();
+      break;
+    case 'remoteOrders':
+      await showRemoteOrdersScreen();
       break;
     case 'storeSelect':
       await showStoreSelection();
@@ -427,6 +433,12 @@ function setupEvents() {
 
   // ダッシュボード導線（本部画面から）
   document.getElementById('adminDashboard').addEventListener('click', () => showDashboardScreen());
+  document.getElementById('adminRemoteOrders').addEventListener('click', () => showRemoteOrdersScreen());
+  document.getElementById('remoteOrdersBack').addEventListener('click', () => showAdminScreen());
+  document.getElementById('remoteOrdersRefresh').addEventListener('click', loadRemoteOrdersReview);
+  document.getElementById('remoteOrdersDate').addEventListener('change', loadRemoteOrdersReview);
+  document.getElementById('remoteOrdersStatusFilter').addEventListener('change', renderRemoteOrdersReview);
+  document.getElementById('remoteOrdersList').addEventListener('click', onRemoteOrderListClick);
   document.getElementById('dashBack').addEventListener('click', () => {
     // Destroy charts on leave
     Object.values(State.dashCharts).forEach(c => c.destroy());
@@ -1102,6 +1114,229 @@ async function onAdminStoreSelect() {
 }
 
 // =====================================================
+// 遠隔注文
+// =====================================================
+
+async function showRemoteOrdersScreen() {
+  hideAllScreens();
+  document.getElementById('remoteOrdersScreen').classList.remove('hidden');
+  saveSession('remoteOrders');
+  await loadRemoteOrdersReview();
+}
+
+async function loadRemoteOrdersReview() {
+  const container = document.getElementById('remoteOrdersList');
+  const dateInput = document.getElementById('remoteOrdersDate');
+  container.innerHTML = '<p class="text-muted">読み込み中...</p>';
+
+  const params = new URLSearchParams();
+  if (dateInput.value) params.set('date', dateInput.value);
+  const result = await api(`/api/remote-orders/review?${params}`);
+  if (!result.success) {
+    container.innerHTML = '';
+    showAlert('remoteOrdersAlert', 'error', result.error || '遠隔注文を取得できませんでした');
+    return;
+  }
+
+  dateInput.value = result.date;
+  State.remoteOrders = result.orders || [];
+  State.remoteOrderStores = result.stores || [];
+  renderRemoteOrdersReview();
+}
+
+function renderRemoteOrdersReview() {
+  const container = document.getElementById('remoteOrdersList');
+  const filter = document.getElementById('remoteOrdersStatusFilter').value;
+  const allOrders = State.remoteOrders || [];
+  const orders = allOrders.filter(order => {
+    if (filter === 'pending') return !order.displayOk;
+    if (filter === 'published') return order.displayOk;
+    return true;
+  });
+  const pendingCount = allOrders.filter(order => !order.displayOk).length;
+  const publishedCount = allOrders.filter(order => order.displayOk).length;
+
+  document.getElementById('remoteOrdersSummary').innerHTML = `
+    <span>全${allOrders.length}件</span>
+    <span class="remote-order-summary-pending">確認待ち ${pendingCount}件</span>
+    <span class="remote-order-summary-published">表示済み ${publishedCount}件</span>
+  `;
+
+  if (orders.length === 0) {
+    container.innerHTML = '<div class="card"><p class="text-muted">対象の遠隔注文はありません。</p></div>';
+    return;
+  }
+
+  container.innerHTML = orders.map(order => renderRemoteOrderReviewCard(order)).join('');
+}
+
+function renderRemoteOrderReviewCard(order) {
+  const encodedSlipKey = encodeURIComponent(order.slipKey);
+  const storeOptions = [
+    '<option value="">店舗を選択...</option>',
+    ...State.remoteOrderStores.map(store =>
+      `<option value="${escapeHtml(store.code)}" ${store.code === order.storeCode ? 'selected' : ''}>${escapeHtml(store.name)}</option>`
+    ),
+  ].join('');
+  const statusClass = order.displayOk
+    ? 'remote-order-status-published'
+    : (order.paymentVerified || order.storeCode)
+      ? 'remote-order-status-reviewing'
+      : 'remote-order-status-pending';
+  const statusLabel = order.displayOk ? '表示済み' : (order.assignmentStatus || '確認待ち');
+
+  return `
+    <article class="remote-order-card" data-slip-key="${encodedSlipKey}">
+      <div class="remote-order-card-header">
+        <div>
+          <div class="remote-order-number">注文 #${escapeHtml(order.orderNumber || order.wixOrderId)}</div>
+          <div class="remote-order-meta">${escapeHtml(formatRemoteOrderDateTime(order.orderedAt))}</div>
+        </div>
+        <span class="remote-order-status ${statusClass}">${escapeHtml(statusLabel)}</span>
+      </div>
+
+      <div class="remote-order-total-label">伝票合計</div>
+      <div class="remote-order-total">${fmtYen(order.itemTotal)}</div>
+
+      <div class="remote-order-source">
+        Wix店舗指定：<strong>${escapeHtml(order.storeRaw || '未指定')}</strong>
+        ／ 決済状態：<strong>${escapeHtml(order.paymentStatus || '不明')}</strong>
+      </div>
+
+      ${renderRemoteOrderItems(order.items || [])}
+      ${renderRemoteOrderComments(order.items || [])}
+
+      <div class="remote-order-review-fields">
+        <label class="form-group">
+          <span>対象店舗</span>
+          <select class="form-control remote-order-store">${storeOptions}</select>
+        </label>
+        <label class="remote-order-check">
+          <input type="checkbox" class="remote-order-payment" ${order.paymentVerified ? 'checked' : ''}>
+          <span>入金・注文内容を確認済み</span>
+        </label>
+        <label class="remote-order-check remote-order-display-check">
+          <input type="checkbox" class="remote-order-display" ${order.displayOk ? 'checked' : ''}>
+          <span>店舗画面に表示OK</span>
+        </label>
+        <button class="btn btn-primary btn-block remote-order-save">確認内容を保存</button>
+      </div>
+      ${order.confirmedBy ? `<div class="remote-order-confirmed">確認：${escapeHtml(order.confirmedBy)} ${escapeHtml(formatRemoteOrderDateTime(order.confirmedAt))}</div>` : ''}
+    </article>
+  `;
+}
+
+function renderRemoteOrderItems(items) {
+  if (!items.length) return '<p class="text-muted">商品明細がありません。</p>';
+  return `
+    <div class="remote-order-items">
+      ${items.map(item => `
+        <div class="remote-order-item">
+          <div class="remote-order-item-main">
+            <strong>${escapeHtml(item.productName || '商品名なし')}</strong>
+            ${item.variantName ? `<span>${escapeHtml(item.variantName)}</span>` : ''}
+            ${item.castName ? `<span>指名：${escapeHtml(item.castName)}</span>` : ''}
+          </div>
+          <div class="remote-order-item-price">
+            <span>${item.quantity}点 × ${fmtYen(item.unitPrice)}</span>
+            <strong>${fmtYen(item.lineSubtotal)}</strong>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderRemoteOrderComments(items) {
+  const comments = items.filter(item => item.customerComment);
+  if (!comments.length) return '';
+  return `
+    <details class="remote-order-comments">
+      <summary>お客様コメント（${comments.length}件）</summary>
+      ${comments.map(item => `
+        <div class="remote-order-comment">
+          <strong>${escapeHtml(item.productName || '')}</strong>
+          <p>${escapeHtml(item.customerComment)}</p>
+        </div>
+      `).join('')}
+    </details>
+  `;
+}
+
+function formatRemoteOrderDateTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function onRemoteOrderListClick(event) {
+  const button = event.target.closest('.remote-order-save');
+  if (!button) return;
+  const card = button.closest('.remote-order-card');
+  const slipKey = decodeURIComponent(card.dataset.slipKey);
+  const storeCode = card.querySelector('.remote-order-store').value;
+  const paymentVerified = card.querySelector('.remote-order-payment').checked;
+  const displayOk = card.querySelector('.remote-order-display').checked;
+
+  startSaving(button);
+  const result = await api(`/api/remote-orders/${encodeURIComponent(slipKey)}/review`, {
+    method: 'PUT',
+    body: JSON.stringify({ storeCode, paymentVerified, displayOk }),
+  });
+  stopSaving(button);
+
+  if (!result.success) {
+    showAlert('remoteOrdersAlert', 'error', result.error || '保存できませんでした');
+    return;
+  }
+  showAlert('remoteOrdersAlert', 'success', displayOk ? '店舗画面へ表示しました' : '確認内容を保存しました');
+  await loadRemoteOrdersReview();
+}
+
+async function loadManagerRemoteOrders() {
+  const container = document.getElementById('managerRemoteOrdersList');
+  container.innerHTML = '<p class="text-muted">読み込み中...</p>';
+  const result = await api(`/api/remote-orders/store/${encodeURIComponent(State.storeCode)}`);
+  if (!result.success) {
+    container.innerHTML = '';
+    showAlert('managerRemoteOrdersAlert', 'error', result.error || '遠隔注文を取得できませんでした');
+    return;
+  }
+
+  const orders = result.orders || [];
+  if (!orders.length) {
+    container.innerHTML = `<p class="text-muted">${escapeHtml(result.date)}の確認済み遠隔注文はありません。</p>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="remote-order-store-date">${escapeHtml(result.date)}・${orders.length}件</div>
+    ${orders.map(order => `
+      <article class="remote-order-card remote-order-card-store">
+        <div class="remote-order-card-header">
+          <div>
+            <div class="remote-order-number">注文 #${escapeHtml(order.orderNumber || order.wixOrderId)}</div>
+            <div class="remote-order-meta">${escapeHtml(formatRemoteOrderDateTime(order.orderedAt))}</div>
+          </div>
+          <span class="remote-order-status remote-order-status-published">確認済み</span>
+        </div>
+        <div class="remote-order-total-label">伝票合計</div>
+        <div class="remote-order-total">${fmtYen(order.itemTotal)}</div>
+        ${renderRemoteOrderItems(order.items || [])}
+        ${renderRemoteOrderComments(order.items || [])}
+      </article>
+    `).join('')}
+  `;
+}
+
+// =====================================================
 // タブ切り替え
 // =====================================================
 
@@ -1134,6 +1369,7 @@ function onTabChange(e) {
   if (tabName === 'shurei') { loadShureiData(); loadManagerEvalData(); loadManagerOwnEval(); }
   if (tabName === 'managerPickup') loadPickupList();
   if (tabName === 'managerIssues') loadIssues('manager');
+  if (tabName === 'managerRemoteOrders') loadManagerRemoteOrders();
   if (tabName === 'castShureiView') loadCastShureiView();
   if (tabName === 'castEval') loadCastEvalData();
   if (tabName === 'castIssues') loadIssues('cast');

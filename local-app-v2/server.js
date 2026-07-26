@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3001;
 const FEEDBACK_VIEW_ROLES = ['executive'];
 const DASHBOARD_ROLES = ['senior_manager', 'manager', 'executive', 'cast_manager'];
 const AIRREGI_IMPORT_ROLES = ['senior_manager', 'manager', 'executive'];
+const REMOTE_ORDER_REVIEW_ROLES = ['senior_manager', 'manager', 'executive'];
 const DEV_LOGIN_ROLES = [
   { role: 'executive', label: '決済者' },
   { role: 'senior_manager', label: '店のトップ' },
@@ -39,6 +40,18 @@ function getBusinessDate() {
     jst.setUTCDate(jst.getUTCDate() - 1);
   }
 
+  const y = jst.getUTCFullYear();
+  const m = String(jst.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(jst.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getRemoteOrderBusinessDate() {
+  const now = new Date();
+  const jst = new Date(now.getTime() + (9 * 60 * 60 * 1000));
+  if (jst.getUTCHours() < 1) {
+    jst.setUTCDate(jst.getUTCDate() - 1);
+  }
   const y = jst.getUTCFullYear();
   const m = String(jst.getUTCMonth() + 1).padStart(2, '0');
   const d = String(jst.getUTCDate()).padStart(2, '0');
@@ -486,6 +499,78 @@ app.post('/api/manager-feedback', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Manager feedback save error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// 遠隔注文API
+// =====================================================
+
+app.get('/api/remote-orders/review', async (req, res) => {
+  if (!REMOTE_ORDER_REVIEW_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+
+  const requestedDate = String(req.query?.date || '').trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)
+    ? requestedDate
+    : getRemoteOrderBusinessDate();
+
+  try {
+    const [orders, stores] = await Promise.all([
+      dataStore.getRemoteOrdersForReview(date),
+      configReader.getStores(),
+    ]);
+    res.json({ success: true, date, orders, stores });
+  } catch (error) {
+    console.error('Remote order review error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/remote-orders/:slipKey/review', async (req, res) => {
+  if (!REMOTE_ORDER_REVIEW_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+
+  const storeCode = String(req.body?.storeCode || '').trim();
+  try {
+    if (storeCode) {
+      const stores = await configReader.getStores();
+      if (!stores.some(store => store.code === storeCode)) {
+        return res.json({ success: false, error: '店舗が見つかりません' });
+      }
+    }
+
+    const order = await dataStore.updateRemoteOrderReview(req.params.slipKey, {
+      storeCode,
+      paymentVerified: Boolean(req.body?.paymentVerified),
+      displayOk: Boolean(req.body?.displayOk),
+      confirmedBy: req.user.displayName || req.user.castName || req.user.email,
+    });
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error('Remote order update error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/remote-orders/store/:storeCode', async (req, res) => {
+  if (!DASHBOARD_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+
+  const requestedDate = String(req.query?.date || '').trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)
+    ? requestedDate
+    : getRemoteOrderBusinessDate();
+
+  try {
+    const orders = await dataStore.getPublishedRemoteOrders(date, req.params.storeCode);
+    res.json({ success: true, date, orders });
+  } catch (error) {
+    console.error('Remote order store view error:', error);
     res.json({ success: false, error: error.message });
   }
 });

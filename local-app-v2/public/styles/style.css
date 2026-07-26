@@ -1248,3 +1248,214 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
   .dash-cast-stats { gap: 8px; font-size: 0.6875rem; }
   .dash-progress-total { grid-template-columns: 1fr 1fr; }
 }
+
+/* 遠隔注文 */
+.remote-order-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.remote-order-controls .form-group {
+  margin-bottom: 0;
+}
+.remote-order-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.remote-order-summary-pending { color: #D68910; }
+.remote-order-summary-published { color: var(--accent); }
+.remote-order-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.remote-order-card-store {
+  box-shadow: none;
+  padding: 16px;
+}
+.remote-order-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.remote-order-number {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text);
+}
+.remote-order-meta,
+.remote-order-confirmed,
+.remote-order-store-date {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.remote-order-status {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+}
+.remote-order-status-pending {
+  color: #9A6700;
+  background: #FFF4CC;
+}
+.remote-order-status-reviewing {
+  color: #7D3C98;
+  background: #F4ECF7;
+}
+.remote-order-status-published {
+  color: #16794B;
+  background: #E8F8F0;
+}
+.remote-order-total-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+.remote-order-total {
+  font-size: clamp(1.9rem, 5vw, 2.75rem);
+  line-height: 1.1;
+  color: var(--primary);
+  font-weight: 900;
+  margin: 2px 0 12px;
+}
+.remote-order-source {
+  padding: 9px 11px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin-bottom: 12px;
+}
+.remote-order-items {
+  border-top: 1px solid var(--border);
+}
+.remote-order-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.remote-order-item-main {
+  min-width: 0;
+}
+.remote-order-item-main strong,
+.remote-order-item-main span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.remote-order-item-main span {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.remote-order-item-price {
+  text-align: right;
+  white-space: nowrap;
+}
+.remote-order-item-price span,
+.remote-order-item-price strong {
+  display: block;
+}
+.remote-order-item-price span {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.remote-order-item-price strong {
+  margin-top: 2px;
+  font-size: 0.9375rem;
+}
+.remote-order-comments {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.remote-order-comments summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  background: var(--bg);
+}
+.remote-order-comment {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+.remote-order-comment p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+.remote-order-review-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 2px solid var(--border);
+}
+.remote-order-review-fields .form-group {
+  margin-bottom: 0;
+}
+.remote-order-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+.remote-order-check input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--primary);
+}
+.remote-order-display-check {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+}
+.remote-order-confirmed {
+  margin-top: 10px;
+  text-align: right;
+}
+.remote-order-store-date {
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .remote-order-controls {
+    grid-template-columns: 1fr;
+  }
+  .remote-order-card {
+    padding: 14px;
+  }
+  .remote-order-item {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  .remote-order-item-price {
+    display: flex;
+    justify-content: space-between;
+    text-align: left;
+  }
+  .remote-order-item-price strong {
+    margin-top: 0;
+  }
+}
