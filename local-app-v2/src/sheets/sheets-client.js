@@ -79,15 +79,23 @@ async function callSheets(operation, label) {
 }
 
 /**
- * Read rows from a sheet range
+ * Read a value range, including the resolved A1 range.
  */
-async function getRows(spreadsheetId, range) {
+async function getValueRange(spreadsheetId, range) {
   const sheets = getSheets();
   const res = await callSheets(
     () => sheets.spreadsheets.values.get({ spreadsheetId, range }),
     `get ${range}`
   );
-  return res.data.values || [];
+  return res.data;
+}
+
+/**
+ * Read rows from a sheet range
+ */
+async function getRows(spreadsheetId, range) {
+  const valueRange = await getValueRange(spreadsheetId, range);
+  return valueRange.values || [];
 }
 
 /**
@@ -95,7 +103,7 @@ async function getRows(spreadsheetId, range) {
  */
 async function appendRows(spreadsheetId, range, values) {
   const sheets = getSheets();
-  await callSheets(
+  const res = await callSheets(
     () => sheets.spreadsheets.values.append({
       spreadsheetId,
       range,
@@ -105,6 +113,7 @@ async function appendRows(spreadsheetId, range, values) {
     }),
     `append ${range}`
   );
+  return res.data;
 }
 
 /**
@@ -150,4 +159,38 @@ async function batchGet(spreadsheetId, ranges) {
   return res.data.valueRanges || [];
 }
 
-module.exports = { getRows, appendRows, updateRange, clearRange, batchGet };
+async function getSpreadsheetMetadata(spreadsheetId) {
+  const sheets = getSheets();
+  const res = await callSheets(
+    () => sheets.spreadsheets.get({
+      spreadsheetId,
+      includeGridData: false,
+      fields: 'namedRanges,sheets.properties(sheetId,title,gridProperties)',
+    }),
+    'get spreadsheet metadata'
+  );
+  return res.data;
+}
+
+async function batchUpdateSpreadsheet(spreadsheetId, requests) {
+  const sheets = getSheets();
+  const res = await callSheets(
+    () => sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    }),
+    'batchUpdate spreadsheet'
+  );
+  return res.data;
+}
+
+module.exports = {
+  getValueRange,
+  getRows,
+  appendRows,
+  updateRange,
+  clearRange,
+  batchGet,
+  getSpreadsheetMetadata,
+  batchUpdateSpreadsheet,
+};

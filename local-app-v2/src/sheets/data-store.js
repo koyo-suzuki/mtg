@@ -1,4 +1,13 @@
-const { getRows, appendRows, updateRange, clearRange, batchGet } = require('./sheets-client');
+const {
+  getValueRange,
+  getRows,
+  appendRows,
+  updateRange,
+  clearRange,
+  batchGet,
+  getSpreadsheetMetadata,
+  batchUpdateSpreadsheet,
+} = require('./sheets-client');
 const {
   AIRREGI_SALES_SHEET_NAME,
   AIRREGI_SALES_HEADER,
@@ -229,29 +238,245 @@ async function saveShurei(date, storeCode, data) {
 // Self Evaluation (自己採点)
 // =====================================================
 
+const SELF_EVAL_SHEET_NAME = 'self_evaluation';
+const SELF_EVAL_NAMED_RANGE_PREFIX = 'self_eval_';
+const selfEvalRowsPromises = new Map();
+const knownSelfEvalNamedRanges = new Set();
+
+function getSelfEvalMonth(date) {
+  const match = String(date || '').match(/^(\d{4})-(\d{2})/);
+  if (!match) throw new Error(`Invalid self-evaluation date: ${date}`);
+  return `${match[1]}${match[2]}`;
+}
+
+function getSelfEvalNamedRange(date) {
+  return `${SELF_EVAL_NAMED_RANGE_PREFIX}${getSelfEvalMonth(date)}`;
+}
+
+function getSelfEvalCacheKey(date) {
+  return `eval_${getSelfEvalMonth(date)}_all`;
+}
+
+function parseValueRangeStartRow(range) {
+  const match = String(range || '').match(/![A-Z]+(\d+):/i);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function isMissingNamedRangeError(error) {
+  const status = error?.code || error?.response?.status;
+  const message = String(error?.message || '').toLowerCase();
+  return status === 400 && (message.includes('unable to parse range') || message.includes('not found'));
+}
+
+function getSelfEvalRowKey(row) {
+  return `${row[0] || ''}\t${row[1] || ''}\t${row[3] || ''}`;
+}
+
+function selfEvalRowMatches(row, date, storeCode, gmail) {
+  return row && row[0] === date && row[1] === storeCode && row[3] === gmail;
+}
+
+function dedupeSelfEvalRows(rows) {
+  const latestByKey = new Map();
+  rows.forEach(row => {
+    const key = getSelfEvalRowKey(row);
+    if (row[0] && row[1] && row[3]) latestByKey.set(key, row);
+  });
+  return [...latestByKey.values()];
+}
+
+async function getSelfEvalRows(date, forceRefresh = false) {
+  const namedRange = getSelfEvalNamedRange(date);
+  const cacheKey = getSelfEvalCacheKey(date);
+
+  if (!forceRefresh) {
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+  }
+  if (selfEvalRowsPromises.has(namedRange)) return selfEvalRowsPromises.get(namedRange);
+
+  const request = getValueRange(DATA_SPREADSHEET_ID, namedRange)
+    .then(valueRange => {
+      const startRow = parseValueRangeStartRow(valueRange.range);
+      if (!startRow) throw new Error(`Unable to resolve named range: ${namedRange}`);
+
+      const indexedRows = (valueRange.values || []).map((values, index) => ({
+        sheetRow: startRow + index,
+        values,
+      }));
+      knownSelfEvalNamedRanges.add(namedRange);
+      setCache(cacheKey, indexedRows);
+      return indexedRows;
+    })
+    .catch(error => {
+      if (!isMissingNamedRangeError(error)) throw error;
+      knownSelfEvalNamedRanges.delete(namedRange);
+      setCache(cacheKey, []);
+      return [];
+    })
+    .finally(() => {
+      selfEvalRowsPromises.delete(namedRange);
+    });
+
+  selfEvalRowsPromises.set(namedRange, request);
+  return request;
+}
+
+function updateCachedSelfEvalRow(date, sheetRow, values) {
+  const entry = cache[getSelfEvalCacheKey(date)];
+  if (!entry || Date.now() - entry.time >= CACHE_TTL) return;
+
+  const index = entry.data.findIndex(row => row.sheetRow === sheetRow);
+  const indexedRow = { sheetRow, values };
+  if (index >= 0) entry.data[index] = indexedRow;
+  else entry.data.push(indexedRow);
+}
+
+function parseAppendedSheetRow(appendResult) {
+  const updatedRange = appendResult?.updates?.updatedRange || '';
+  const match = updatedRange.match(/![A-Z]+(\d+):[A-Z]+(\d+)$/i);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function normalizeRecordRow(recordRow) {
+  const parsed = parseInt(recordRow, 10);
+  return Number.isInteger(parsed) && parsed >= 2 && parsed <= 1000000 ? parsed : null;
+}
+
+async function resolveSelfEvalRecordRow(recordRow, date, storeCode, gmail) {
+  const normalizedRow = normalizeRecordRow(recordRow);
+  if (!normalizedRow) return null;
+
+  const cachedRows = getCached(getSelfEvalCacheKey(date));
+  if (cachedRows) {
+    const cachedRow = cachedRows.find(row => row.sheetRow === normalizedRow);
+    return cachedRow && selfEvalRowMatches(cachedRow.values, date, storeCode, gmail)
+      ? normalizedRow
+      : null;
+  }
+
+  const rows = await getRows(
+    DATA_SPREADSHEET_ID,
+    `self_evaluation!A${normalizedRow}:H${normalizedRow}`
+  );
+  return selfEvalRowMatches(rows[0], date, storeCode, gmail) ? normalizedRow : null;
+}
+
 async function getSelfEvalByDateStore(date, storeCode) {
-  const cacheKey = `eval_${date}_${storeCode}`;
-  const cached = getCached(cacheKey);
+  const rows = await getSelfEvalRows(date);
+  const latestByGmail = new Map();
+
+  rows
+    .filter(row => row.values[0] === date && row.values[1] === storeCode)
+    .forEach(row => {
+      const r = row.values;
+      latestByGmail.set(r[3], {
+        castName: r[2] || '',
+        gmail: r[3] || '',
+        score: parseInt(r[4]) || 0,
+        comment: r[5] || '',
+        isEarlyLeave: r[6] === '1' || r[6] === 'true',
+        recordRow: row.sheetRow,
+      });
+    });
+
+  return [...latestByGmail.values()];
+}
+
+function getMonthsInRange(from, to) {
+  const startMatch = String(from || '').match(/^(\d{4})-(\d{2})/);
+  const endMatch = String(to || '').match(/^(\d{4})-(\d{2})/);
+  if (!startMatch || !endMatch) return [];
+
+  const current = new Date(Date.UTC(parseInt(startMatch[1], 10), parseInt(startMatch[2], 10) - 1, 1));
+  const end = new Date(Date.UTC(parseInt(endMatch[1], 10), parseInt(endMatch[2], 10) - 1, 1));
+  const months = [];
+  while (current <= end) {
+    months.push(`${current.getUTCFullYear()}${String(current.getUTCMonth() + 1).padStart(2, '0')}`);
+    current.setUTCMonth(current.getUTCMonth() + 1);
+  }
+  return months;
+}
+
+async function getSelfEvalNamedRangeMetadata() {
+  const cached = getCached('eval_named_ranges');
   if (cached) return cached;
 
-  const rows = await getRows(DATA_SPREADSHEET_ID, 'self_evaluation!A2:H5000');
-  const result = rows
-    .filter(r => r[0] === date && r[1] === storeCode)
-    .map(r => ({
-      castName: r[2] || '',
-      gmail: r[3] || '',
-      score: parseInt(r[4]) || 0,
-      comment: r[5] || '',
-      isEarlyLeave: r[6] === '1' || r[6] === 'true',
-    }));
-  setCache(cacheKey, result);
+  const metadata = await getSpreadsheetMetadata(DATA_SPREADSHEET_ID);
+  const result = {
+    namedRanges: (metadata.namedRanges || []).filter(range => range.name.startsWith(SELF_EVAL_NAMED_RANGE_PREFIX)),
+    sheet: (metadata.sheets || []).find(sheet => sheet.properties?.title === SELF_EVAL_SHEET_NAME),
+  };
+  setCache('eval_named_ranges', result);
+  result.namedRanges.forEach(range => knownSelfEvalNamedRanges.add(range.name));
   return result;
 }
 
-async function saveSelfEval(date, storeCode, gmail, castName, data) {
-  const allRows = await getRows(DATA_SPREADSHEET_ID, 'self_evaluation!A2:H5000');
-  const rowIndex = allRows.findIndex(r => r[0] === date && r[1] === storeCode && r[3] === gmail);
+async function ensureSelfEvalNamedRange(date, sheetRow) {
+  const namedRange = getSelfEvalNamedRange(date);
+  if (knownSelfEvalNamedRanges.has(namedRange)) return;
 
+  const metadata = await getSelfEvalNamedRangeMetadata();
+  if (metadata.namedRanges.some(range => range.name === namedRange)) {
+    knownSelfEvalNamedRanges.add(namedRange);
+    return;
+  }
+  if (!metadata.sheet) throw new Error(`Sheet not found: ${SELF_EVAL_SHEET_NAME}`);
+
+  const sheetId = metadata.sheet.properties.sheetId;
+  const newMonthStartIndex = Math.max(1, sheetRow - 101);
+  const previousMonthEndIndex = sheetRow - 1;
+  const requests = [];
+
+  metadata.namedRanges.forEach(range => {
+    const gridRange = range.range || {};
+    if (gridRange.sheetId !== sheetId) return;
+    if (gridRange.endRowIndex && gridRange.endRowIndex <= previousMonthEndIndex) return;
+
+    requests.push({
+      updateNamedRange: {
+        namedRange: {
+          namedRangeId: range.namedRangeId,
+          name: range.name,
+          range: {
+            ...gridRange,
+            endRowIndex: previousMonthEndIndex,
+          },
+        },
+        fields: 'range',
+      },
+    });
+  });
+
+  requests.push({
+    addNamedRange: {
+      namedRange: {
+        name: namedRange,
+        range: {
+          sheetId,
+          startRowIndex: newMonthStartIndex,
+          startColumnIndex: 0,
+          endColumnIndex: 8,
+        },
+      },
+    },
+  });
+
+  try {
+    await batchUpdateSpreadsheet(DATA_SPREADSHEET_ID, requests);
+  } catch (error) {
+    // Two serverless instances can create the first row of a month together.
+    // Treat a concurrently-created range as success after a metadata readback.
+    invalidateCache('eval_named_ranges');
+    const refreshed = await getSelfEvalNamedRangeMetadata();
+    if (!refreshed.namedRanges.some(range => range.name === namedRange)) throw error;
+  }
+
+  knownSelfEvalNamedRanges.add(namedRange);
+  invalidateCache('eval_named_ranges');
+}
+
+async function saveSelfEval(date, storeCode, gmail, castName, data, recordRow) {
   const newRow = [
     date, storeCode, castName, gmail,
     String(data.score || 0),
@@ -260,13 +485,36 @@ async function saveSelfEval(date, storeCode, gmail, castName, data) {
     nowISO(),
   ];
 
-  if (rowIndex >= 0) {
-    const sheetRow = rowIndex + 2;
-    await updateRange(DATA_SPREADSHEET_ID, `self_evaluation!A${sheetRow}:H${sheetRow}`, [newRow]);
-  } else {
-    await appendRows(DATA_SPREADSHEET_ID, 'self_evaluation!A:H', [newRow]);
+  let sheetRow = await resolveSelfEvalRecordRow(recordRow, date, storeCode, gmail);
+
+  if (!sheetRow) {
+    // A missing or invalid row token is uncommon. Refresh once so a save from
+    // another serverless instance cannot cause a duplicate append.
+    const allRows = await getSelfEvalRows(date, true);
+    for (let index = allRows.length - 1; index >= 0; index -= 1) {
+      if (selfEvalRowMatches(allRows[index].values, date, storeCode, gmail)) {
+        sheetRow = allRows[index].sheetRow;
+        break;
+      }
+    }
   }
-  invalidateCache('eval');
+
+  if (sheetRow) {
+    await updateRange(DATA_SPREADSHEET_ID, `self_evaluation!A${sheetRow}:H${sheetRow}`, [newRow]);
+    updateCachedSelfEvalRow(date, sheetRow, newRow);
+  } else {
+    const appendResult = await appendRows(DATA_SPREADSHEET_ID, 'self_evaluation!A:H', [newRow]);
+    sheetRow = parseAppendedSheetRow(appendResult);
+    if (sheetRow) {
+      await ensureSelfEvalNamedRange(date, sheetRow);
+      updateCachedSelfEvalRow(date, sheetRow, newRow);
+    } else {
+      invalidateCache(getSelfEvalCacheKey(date));
+    }
+  }
+
+  invalidateDashboardCache();
+  return { recordRow: sheetRow };
 }
 
 // =====================================================
@@ -611,15 +859,26 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
   const cached = getDashCached(cacheKey, to);
   if (cached) return cached;
 
+  const selfEvalMetadata = await getSelfEvalNamedRangeMetadata();
+  const availableSelfEvalRanges = new Set(selfEvalMetadata.namedRanges.map(range => range.name));
+  const selfEvalRanges = getMonthsInRange(from, to)
+    .map(month => `${SELF_EVAL_NAMED_RANGE_PREFIX}${month}`)
+    .filter(name => availableSelfEvalRanges.has(name));
+
   const ranges = [
     'shurei!A2:E5000',
     'chorei!A2:L10000',
-    'self_evaluation!A2:H5000',
     'issues!A2:I5000',
   ];
+  const issuesResultIndex = 2;
+  let managerFeedbackResultIndex = null;
   if (includeManagerFeedback) {
+    managerFeedbackResultIndex = ranges.length;
     ranges.push('manager_feedback!A2:I5000');
   }
+  const selfEvalResultStartIndex = ranges.length;
+  ranges.push(...selfEvalRanges);
+
   const [results, airregiRows] = await Promise.all([
     batchGet(DATA_SPREADSHEET_ID, ranges),
     getOptionalRows(DATA_SPREADSHEET_ID, AIRREGI_SALES_RANGE),
@@ -676,7 +935,10 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
     }));
 
   // Evaluations (self_evaluation)
-  const evaluations = (results[2].values || [])
+  const selfEvalRows = selfEvalRanges.flatMap((_, index) => (
+    results[selfEvalResultStartIndex + index]?.values || []
+  ));
+  const evaluations = dedupeSelfEvalRows(selfEvalRows)
     .filter(r => inRange(r[0]) && matchStore(r[1]))
     .map(r => ({
       date: r[0],
@@ -689,7 +951,7 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
     }));
 
   // Issues
-  const issues = (results[3].values || [])
+  const issues = (results[issuesResultIndex].values || [])
     .filter(r => inRange(r[1]) && matchStore(r[2]))
     .map(r => ({
       id: r[0] || '',
@@ -704,7 +966,7 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
     }));
 
   const managerFeedback = includeManagerFeedback
-    ? (results[4].values || [])
+    ? (results[managerFeedbackResultIndex].values || [])
       .filter(r => inRange(r[1]) && matchStore(r[2]))
       .map(r => ({
         id: r[0] || '',

@@ -15,6 +15,8 @@ const State = {
   choreiCasts: [],
   selectedScore: null,
   managerSelectedScore: null,
+  castEvalRecordRow: null,
+  managerEvalRecordRow: null,
   issueFilter: 'all',
   idToken: null,    // Google ID Token
   googleClientId: null,
@@ -1451,12 +1453,17 @@ function onScoreSelect(e) {
 }
 
 async function loadCastEvalData() {
+  State.castEvalRecordRow = null;
+  State.selectedScore = null;
+  document.getElementById('evalComment').value = '';
+  document.querySelectorAll('#scoreSelector .score-btn').forEach(btn => btn.classList.remove('active'));
   const result = await api(`/api/self-evaluation/${State.storeCode}`);
   if (!result.success) return;
 
   const myEval = result.evaluations.find(e => e.gmail === State.gmail);
   if (myEval) {
     State.selectedScore = myEval.score;
+    State.castEvalRecordRow = myEval.recordRow || null;
     document.getElementById('evalComment').value = myEval.comment || '';
     document.querySelectorAll('#scoreSelector .score-btn').forEach(btn => {
       btn.classList.toggle('active', parseInt(btn.dataset.score) === myEval.score);
@@ -1481,11 +1488,14 @@ async function onSaveEval() {
       castName: State.castName || State.displayName,
       score: State.selectedScore,
       comment: document.getElementById('evalComment').value.trim(),
-      isEarlyLeave: false
+      isEarlyLeave: false,
+      recordRow: State.castEvalRecordRow,
     })
   });
 
   stopSaving(btn);
+
+  if (result.success) State.castEvalRecordRow = result.recordRow || State.castEvalRecordRow;
 
   showAlert('castEvalAlert', result.success ? 'success' : 'error',
     result.success ? '保存しました' : (result.error || '保存できませんでした'));
@@ -1544,12 +1554,17 @@ async function loadManagerEvalData() {
 
 // 店責自身の振り返りデータ読み込み
 async function loadManagerOwnEval() {
+  State.managerEvalRecordRow = null;
+  State.managerSelectedScore = null;
+  document.getElementById('managerEvalComment').value = '';
+  document.querySelectorAll('.manager-score-btn').forEach(btn => btn.classList.remove('active'));
   const result = await api(`/api/self-evaluation/${State.storeCode}`);
   if (!result.success) return;
 
   const myEval = result.evaluations.find(e => e.gmail === State.gmail);
   if (myEval) {
     State.managerSelectedScore = myEval.score;
+    State.managerEvalRecordRow = myEval.recordRow || null;
     document.getElementById('managerEvalComment').value = myEval.comment || '';
     document.querySelectorAll('.manager-score-btn').forEach(btn => {
       btn.classList.toggle('active', parseInt(btn.dataset.score) === myEval.score);
@@ -1582,11 +1597,14 @@ async function onSaveManagerEval() {
       castName: State.castName || State.displayName,
       score: State.managerSelectedScore,
       comment: document.getElementById('managerEvalComment').value.trim(),
-      isEarlyLeave: false
+      isEarlyLeave: false,
+      recordRow: State.managerEvalRecordRow,
     })
   });
 
   stopSaving(btn);
+
+  if (result.success) State.managerEvalRecordRow = result.recordRow || State.managerEvalRecordRow;
 
   showAlert('managerEvalAlert', result.success ? 'success' : 'error',
     result.success ? '保存しました' : (result.error || '保存できませんでした'));
@@ -2751,7 +2769,11 @@ async function doSaveCastEval() {
       score: State.selectedScore,
       comment: document.getElementById('evalComment').value.trim(),
       isEarlyLeave: false,
+      recordRow: State.castEvalRecordRow,
     }),
+  }).then(result => {
+    if (result.success) State.castEvalRecordRow = result.recordRow || State.castEvalRecordRow;
+    return result;
   }));
 }
 
@@ -2767,9 +2789,13 @@ async function doSaveManagerEval() {
         score: State.managerSelectedScore,
         comment: document.getElementById('managerEvalComment').value.trim(),
         isEarlyLeave: false,
+        recordRow: State.managerEvalRecordRow,
       }),
     });
-    if (result.success) await loadManagerEvalData();
+    if (result.success) {
+      State.managerEvalRecordRow = result.recordRow || State.managerEvalRecordRow;
+      await loadManagerEvalData();
+    }
     return result;
   });
 }

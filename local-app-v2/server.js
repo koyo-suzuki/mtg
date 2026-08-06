@@ -404,14 +404,14 @@ app.get('/api/shurei/:storeCode', async (req, res) => {
 // =====================================================
 
 app.post('/api/self-evaluation', async (req, res) => {
-  const { storeCode, gmail, castName, score, comment, isEarlyLeave } = req.body;
+  const { storeCode, gmail, castName, score, comment, isEarlyLeave, recordRow } = req.body;
   const date = getBusinessDate();
 
   try {
-    await dataStore.saveSelfEval(date, storeCode, gmail, castName, {
+    const saved = await dataStore.saveSelfEval(date, storeCode, gmail, castName, {
       score, comment, isEarlyLeave,
-    });
-    res.json({ success: true });
+    }, recordRow);
+    res.json({ success: true, recordRow: saved.recordRow });
   } catch (error) {
     console.error('Self-evaluation save error:', error);
     res.json({ success: false, error: error.message });

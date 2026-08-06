@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>店責報告 UI mock</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --primary: #6C5CE7;
+      --primary-light: #A29BFE;
+      --primary-bg: #F0EDFF;
+      --accent: #00B894;
+      --accent-bg: #E6FAF5;
+      --danger: #E17055;
+      --danger-bg: #FFEAEA;
+      --warning: #FDCB6E;
+      --text: #2D3436;
+      --text-secondary: #636E72;
+      --text-light: #B2BEC3;
+      --border: #E8E8ED;
+      --bg: #F7F7FB;
+      --card: #FFFFFF;
+      --shadow-sm: 0 1px 3px rgba(108,92,231,0.06);
+      --shadow-md: 0 4px 16px rgba(108,92,231,0.08);
+      --radius: 14px;
+      --radius-sm: 10px;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    .page {
+      width: 1400px;
+      padding: 44px;
+    }
+    .heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 22px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    .lead {
+      margin-top: 8px;
+      color: var(--text-secondary);
+      font-size: 15px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      height: 30px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: var(--primary-bg);
+      color: var(--primary);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .mock-grid {
+      display: grid;
+      grid-template-columns: 390px 390px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+    .phone {
+      width: 390px;
+      min-height: 780px;
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      background: var(--bg);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+    }
+    .screen {
+      padding: 22px 16px 30px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .title h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      color: var(--text-light);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+    .back {
+      height: 34px;
+      padding: 0 14px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: #fff;
+      color: var(--text-secondary);
+      font-weight: 800;
+    }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .tab {
+      flex: 1;
+      min-width: 0;
+      text-align: center;
+      padding: 9px 4px;
+      border-radius: 10px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .tab.active {
+      background: var(--primary);
+      color: #fff;
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--card);
+      box-shadow: var(--shadow-sm);
+      padding: 18px;
+      margin-bottom: 14px;
+    }
+    .card-title {
+      margin-bottom: 14px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+    }
+    .notice {
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      background: var(--primary-bg);
+      color: #5146bf;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .form-group { margin-bottom: 14px; }
+    .control {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      color: var(--text);
+      padding: 11px 13px;
+      font-size: 15px;
+    }
+    textarea.control {
+      min-height: 116px;
+      resize: none;
+    }
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .segment {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .segment.active {
+      border-color: var(--primary);
+      background: var(--primary-bg);
+      color: var(--primary);
+    }
+    .primary-btn {
+      width: 100%;
+      height: 48px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: var(--primary);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .fine {
+      color: var(--text-light);
+      font-size: 12px;
+      text-align: center;
+      margin-top: 10px;
+    }
+    .list-toolbar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .pill {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: var(--bg);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 800;
+      text-align: center;
+    }
+    .report-item {
+      padding: 14px 0;
+      border-top: 1px solid var(--border);
+    }
+    .report-item:first-of-type { border-top: 0; }
+    .report-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .name {
+      font-size: 15px;
+      font-weight: 900;
+    }
+    .role {
+      display: inline-flex;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-bg);
+      color: #00A382;
+      font-size: 11px;
+      font-weight: 800;
+      margin-left: 5px;
+    }
+    .role.sub {
+      background: #FFF4D6;
+      color: #D68910;
+    }
+    .time {
+      color: var(--text-light);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .body {
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+    .status-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .mini-btn {
+      height: 32px;
+      padding: 0 10px;
+      border: 1.5px solid var(--border);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .mini-btn.main {
+      border-color: var(--primary);
+      background: var(--primary-bg);
+      color: var(--primary);
+    }
+    .notes {
+      padding: 20px 22px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow-sm);
+    }
+    .notes h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    .notes ul {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--text-secondary);
+      font-size: 15px;
+    }
+    .notes li { margin-bottom: 10px; }
+    .flow {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .flow-step {
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .arrow {
+      color: var(--primary);
+      font-weight: 900;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="heading">
+      <div>
+        <h1>店責報告機能 UIラフ</h1>
+        <div class="lead">朝礼・終礼シート内に、匿名の報告フォームと上位者向け確認一覧を追加する想定</div>
+      </div>
+      <div class="badge">抑止力・裏取り用途</div>
+    </div>
+
+    <section class="mock-grid">
+      <div class="phone">
+        <div class="screen">
+          <div class="header">
+            <div class="title">
+              <h2>かほ</h2>
+              <div class="subtitle">Bisquedoll OSAKA / 営業日: 2026/05/05</div>
+            </div>
+            <button class="back">戻る</button>
+          </div>
+          <div class="tabs">
+            <div class="tab">入力</div>
+            <div class="tab">朝礼</div>
+            <div class="tab">終礼</div>
+            <div class="tab">振り返り</div>
+            <div class="tab active">店責報告</div>
+          </div>
+          <div class="card">
+            <div class="card-title">店責・副店責への報告</div>
+            <div class="notice">報告者名は保存しません。内容は上位者のみ確認できます。</div>
+            <div class="form-group">
+              <label>対象者</label>
+              <select class="control">
+                <option>対象の店責を選択</option>
+                <option>山田さん</option>
+                <option>佐藤さん</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>区分</label>
+              <div class="segmented">
+                <div class="segment active">店責</div>
+                <div class="segment">副店責</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>不備の内容</label>
+              <textarea class="control">例：付け回しをしてくれなかった。裏で寝ている時間があり、確認ができなかった。</textarea>
+            </div>
+            <button class="primary-btn">匿名で報告する</button>
+            <div class="fine">虚偽報告防止のため、日時・店舗のみ自動保存</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phone">
+        <div class="screen">
+          <div class="header">
+            <div class="title">
+              <h2>本部確認</h2>
+              <div class="subtitle">決済者・店舗トップ向け</div>
+            </div>
+            <button class="back">戻る</button>
+          </div>
+          <div class="tabs">
+            <div class="tab">売上</div>
+            <div class="tab">出勤</div>
+            <div class="tab active">報告</div>
+            <div class="tab">伝言板</div>
+          </div>
+          <div class="card">
+            <div class="card-title">店責報告一覧</div>
+            <div class="list-toolbar">
+              <div class="pill">店舗: ビスク大阪</div>
+              <div class="pill">期間: 今日</div>
+            </div>
+            <div class="report-item">
+              <div class="report-top">
+                <div class="name">山田さん <span class="role">店責</span></div>
+                <div class="time">22:18</div>
+              </div>
+              <div class="body">付け回しがほぼなく、キャスト側で判断する場面が多かった。</div>
+              <div class="status-row">
+                <button class="mini-btn main">確認メモ</button>
+                <button class="mini-btn">対応済みにする</button>
+              </div>
+            </div>
+            <div class="report-item">
+              <div class="report-top">
+                <div class="name">佐藤さん <span class="role sub">副店責</span></div>
+                <div class="time">21:05</div>
+              </div>
+              <div class="body">裏にいる時間が長く、確認したい時に不在だった。</div>
+              <div class="status-row">
+                <button class="mini-btn main">確認メモ</button>
+                <button class="mini-btn">対応済みにする</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="notes">
+        <h2>実装方針</h2>
+        <ul>
+          <li>キャスト側に「店責報告」タブを追加し、入力は対象者・区分・自由記述のみに絞る。</li>
+          <li>報告者名は画面にも保存データにも出さず、店舗・日時・対象者・内容だけ保持する。</li>
+          <li>閲覧は決済者・店のトップを基本にし、必要な場合だけ店長・副店長まで開放する。</li>
+          <li>評価制度として重く作らず、「今日寝てた？」「付け回ししてなかった？」の確認に使う。</li>
+        </ul>
+        <div class="flow">
+          <div class="flow-step"><span class="arrow">1</span>キャストが匿名で報告</div>
+          <div class="flow-step"><span class="arrow">2</span>上位者だけが一覧で確認</div>
+          <div class="flow-step"><span class="arrow">3</span>必要に応じて本人確認・裏取り</div>
+        </div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>
