@@ -45,6 +45,8 @@ body {
 .mt-20 { margin-top: 20px; }
 .hidden { display: none !important; }
 
+body.announcement-open { overflow: hidden; }
+
 /* =====================================================
    画面管理
    ===================================================== */
@@ -173,6 +175,106 @@ select.form-control { appearance: auto; }
 .btn-danger:hover { opacity: 0.9; }
 .btn-block { display: flex; width: 100%; }
 .btn-sm { padding: 6px 14px; font-size: 0.8125rem; border-radius: 8px; }
+
+/* =====================================================
+   期間限定のお知らせモーダル
+   ===================================================== */
+.announcement-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(26, 20, 48, 0.72);
+  backdrop-filter: blur(4px);
+}
+.announcement-modal {
+  position: relative;
+  width: min(100%, 460px);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(24, 17, 58, 0.36);
+}
+.announcement-modal:focus { outline: none; }
+.announcement-close-icon {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  color: #5a2640;
+  font-size: 1.7rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(61, 20, 41, 0.2);
+}
+.announcement-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1402 / 1122;
+  object-fit: cover;
+  border-radius: 20px 20px 0 0;
+}
+.announcement-body {
+  padding: 20px 22px 16px;
+  text-align: center;
+}
+.announcement-date {
+  margin-bottom: 4px;
+  color: #6c5ce7;
+  font-size: 0.9375rem;
+  font-weight: 800;
+}
+.announcement-body h2 {
+  margin-bottom: 12px;
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.4;
+}
+.announcement-required {
+  margin-bottom: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #fff0f0;
+  color: #c0392b;
+  font-size: 1rem;
+  font-weight: 800;
+}
+.announcement-body p {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.announcement-body .announcement-urgent {
+  margin: 8px 0 16px;
+  color: var(--text);
+  font-weight: 800;
+}
+.announcement-action { text-decoration: none; }
+.announcement-later { margin-top: 2px; padding: 8px 16px; }
+
+@media (max-width: 600px) {
+  .announcement-overlay {
+    align-items: flex-start;
+    padding: 12px;
+    overflow-y: auto;
+  }
+  .announcement-modal {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    border-radius: 16px;
+  }
+  .announcement-image { border-radius: 16px 16px 0 0; }
+  .announcement-body { padding: 16px 18px 10px; }
+  .announcement-body h2 { font-size: 1.0625rem; }
+}
 
 .dev-login-area {
   border-top: 1px solid var(--border);

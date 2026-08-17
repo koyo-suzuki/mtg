@@ -543,6 +543,36 @@
       </div>
     </div>
 
+    <!-- ========== 期間限定のお知らせ ========== -->
+    <div id="awardAnnouncementModal" class="announcement-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="awardAnnouncementTitle">
+      <div class="announcement-modal" tabindex="-1">
+        <button id="awardAnnouncementCloseIcon" class="announcement-close-icon" type="button" aria-label="お知らせを閉じる">&times;</button>
+
+        <img
+          class="announcement-image"
+          src="/images/award-ceremony-ranking-2026.jpg"
+          alt="会場参加者限定 表彰者順位予想で豪華プレゼント"
+        >
+
+        <div class="announcement-body">
+          <div class="announcement-date">8/31（月）12:30〜16:30</div>
+          <h2 id="awardAnnouncementTitle">前期ビスクドールグループ表彰式</h2>
+          <div class="announcement-required">⚠️ 原則全員参加です</div>
+          <p>短時間・途中からの参加もOK！</p>
+          <p class="announcement-urgent">未回答の方は至急回答してください</p>
+
+          <a
+            id="awardAnnouncementFormLink"
+            class="btn btn-primary btn-block announcement-action"
+            href="https://docs.google.com/forms/d/e/1FAIpQLScFw2vTAISFPQ4rvRVgqJBnP8leTeBWOP6KRA21HMdFNdDZyg/viewform?usp=dialog"
+            target="_blank"
+            rel="noopener noreferrer"
+          >出欠を回答する</a>
+          <button id="awardAnnouncementClose" class="btn btn-text btn-block announcement-later" type="button">閉じる</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script src="/scripts/app.js"></script>

@@ -58,6 +58,13 @@ function canViewManagerFeedback() {
 // =====================================================
 
 const SESSION_KEY = 'mtg_session';
+const AWARD_ANNOUNCEMENT = {
+  id: 'award-ceremony-2026-08-31',
+  startsAt: new Date('2026-08-17T00:00:00+09:00').getTime(),
+  endsAt: new Date('2026-08-31T16:30:00+09:00').getTime(),
+};
+let announcementShownThisSession = false;
+let announcementLastFocusedElement = null;
 
 function saveSession(screen) {
   const data = {
@@ -342,6 +349,17 @@ async function handleGoogleCredentialResponse(response) {
 }
 
 function setupEvents() {
+  // 期間限定のお知らせ
+  document.getElementById('awardAnnouncementClose').addEventListener('click', closeAwardAnnouncement);
+  document.getElementById('awardAnnouncementCloseIcon').addEventListener('click', closeAwardAnnouncement);
+  document.getElementById('awardAnnouncementFormLink').addEventListener('click', closeAwardAnnouncement);
+  document.getElementById('awardAnnouncementModal').addEventListener('click', (e) => {
+    if (e.target.id === 'awardAnnouncementModal') closeAwardAnnouncement();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAwardAnnouncement();
+  });
+
   // ロール選択
   document.getElementById('roleSelectManager').addEventListener('click', async () => {
     if (State.role === 'manager') {
@@ -611,6 +629,7 @@ async function showManagerScreen() {
   }
 
   saveSession('manager');
+  maybeShowAwardAnnouncement();
 }
 
 async function loadCastMaster() {
@@ -921,6 +940,58 @@ async function showCastScreen() {
   await loadCastData();
 
   saveSession('cast');
+  maybeShowAwardAnnouncement();
+}
+
+// =====================================================
+// 期間限定のお知らせ
+// =====================================================
+
+function getTokyoDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function getAwardAnnouncementStorageKey() {
+  return `mtg_announcement:${AWARD_ANNOUNCEMENT.id}:${State.gmail || 'unknown'}`;
+}
+
+function maybeShowAwardAnnouncement(now = new Date()) {
+  const nowMs = now.getTime();
+  if (nowMs < AWARD_ANNOUNCEMENT.startsAt || nowMs > AWARD_ANNOUNCEMENT.endsAt) return;
+  if (announcementShownThisSession) return;
+
+  const today = getTokyoDateKey(now);
+  try {
+    if (localStorage.getItem(getAwardAnnouncementStorageKey()) === today) return;
+    localStorage.setItem(getAwardAnnouncementStorageKey(), today);
+  } catch (e) {
+    // localStorageが利用できない場合も、同一ページ内では一度だけ表示する
+  }
+
+  announcementShownThisSession = true;
+  announcementLastFocusedElement = document.activeElement;
+  const modal = document.getElementById('awardAnnouncementModal');
+  modal.classList.remove('hidden');
+  document.body.classList.add('announcement-open');
+  requestAnimationFrame(() => modal.querySelector('.announcement-modal').focus());
+}
+
+function closeAwardAnnouncement() {
+  const modal = document.getElementById('awardAnnouncementModal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  modal.classList.add('hidden');
+  document.body.classList.remove('announcement-open');
+  if (announcementLastFocusedElement && typeof announcementLastFocusedElement.focus === 'function') {
+    announcementLastFocusedElement.focus();
+  }
+  announcementLastFocusedElement = null;
 }
 
 async function loadCastData() {
