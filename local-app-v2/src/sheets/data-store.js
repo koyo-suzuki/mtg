@@ -16,6 +16,8 @@ const {
 
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
 const AIRREGI_SALES_RANGE = `${AIRREGI_SALES_SHEET_NAME}!A2:G100000`;
+const CHOREI_RANGE = 'chorei!A2:L';
+const SHUREI_RANGE = 'shurei!A2:E';
 
 // =====================================================
 // In-memory cache (short TTL for operational data)
@@ -75,7 +77,7 @@ async function getOptionalRows(spreadsheetId, range) {
 async function getChoreiRows() {
   const cached = getCached('chorei_all');
   if (cached) return cached;
-  const rows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L10000');
+  const rows = await getRows(DATA_SPREADSHEET_ID, CHOREI_RANGE);
   setCache('chorei_all', rows);
   return rows;
 }
@@ -84,9 +86,53 @@ async function getChoreiRows() {
 // Chorei (朝礼)
 // =====================================================
 
+function choreiCastKey(castName, gmail) {
+  return gmail ? `email:${String(gmail).trim().toLowerCase()}` : `name:${String(castName || '').trim()}`;
+}
+
+function getLatestChoreiEntries(rows) {
+  const latest = new Map();
+  rows.forEach((values, index) => {
+    if (!values[0] || !values[1] || (!values[2] && !values[3])) return;
+    const key = JSON.stringify([values[0], values[1], choreiCastKey(values[2], values[3])]);
+    const entry = { values, sheetRow: index + 2 };
+    const previous = latest.get(key);
+    if (!previous || (Date.parse(values[11]) || 0) >= (Date.parse(previous.values[11]) || 0)) {
+      latest.set(key, entry);
+    }
+  });
+  return [...latest.values()];
+}
+
+async function getChoreiSheetId() {
+  const cached = getCached('sheet_id_chorei');
+  if (cached !== null) return cached;
+  const metadata = await getSpreadsheetMetadata(DATA_SPREADSHEET_ID);
+  const sheet = metadata.sheets.find(item => item.properties.title === 'chorei');
+  if (!sheet) throw new Error('朝礼の保存先シートが見つかりません');
+  setCache('sheet_id_chorei', sheet.properties.sheetId);
+  return sheet.properties.sheetId;
+}
+
+function choreiRowUpdate(sheetId, sheetRow, startColumnIndex, values) {
+  return {
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: sheetRow - 1,
+        endRowIndex: sheetRow,
+        startColumnIndex,
+        endColumnIndex: startColumnIndex + values.length,
+      },
+      rows: [{ values: values.map(value => ({ userEnteredValue: { stringValue: String(value) } })) }],
+      fields: 'userEnteredValue',
+    },
+  };
+}
+
 async function getChoreiByDateStore(date, storeCode) {
   const rows = await getChoreiRows();
-  return rows
+  return getLatestChoreiEntries(rows).map(entry => entry.values)
     .filter(r => r[0] === date && r[1] === storeCode)
     .map(r => ({
       castName: r[2] || '',
@@ -102,11 +148,26 @@ async function getChoreiByDateStore(date, storeCode) {
 }
 
 /**
- * Save chorei casts (replaces all entries for date+store)
+ * Save only submitted casts and explicitly removed casts for date+store.
  */
-async function saveChoreiCasts(date, storeCode, casts) {
-  const allRows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L10000');
-  const otherRows = allRows.filter(r => !(r[0] === date && r[1] === storeCode));
+async function saveChoreiCasts(date, storeCode, casts, editorEmail, removedCasts = []) {
+  if (!date || !storeCode || !Array.isArray(casts) || !Array.isArray(removedCasts)) throw new Error('店舗と朝礼データを確認してください');
+  const requestedKeys = new Set();
+  casts.forEach(cast => {
+    if (!cast || (!cast.gmail && !cast.castName)) throw new Error('キャストを確認してください');
+    const key = choreiCastKey(cast.castName, cast.gmail);
+    if (requestedKeys.has(key)) throw new Error('同じキャストが重複しています。画面を再読み込みしてください');
+    requestedKeys.add(key);
+  });
+  const removedKeys = new Set(removedCasts.map(cast => choreiCastKey(cast.castName, cast.gmail)));
+
+  const allRows = await getRows(DATA_SPREADSHEET_ID, CHOREI_RANGE);
+  const existing = new Map(getLatestChoreiEntries(allRows)
+    .filter(entry => entry.values[0] === date && entry.values[1] === storeCode)
+    .map(entry => [choreiCastKey(entry.values[2], entry.values[3]), entry]));
+  const sheetId = await getChoreiSheetId();
+  const requests = [];
+  const appendedRows = [];
 
   const newRows = casts.map(c => [
     date,
@@ -123,29 +184,46 @@ async function saveChoreiCasts(date, storeCode, casts) {
     nowISO(),
   ]);
 
-  const allData = [...otherRows, ...newRows];
+  newRows.forEach(row => {
+    const entry = existing.get(choreiCastKey(row[2], row[3]));
+    if (!entry) {
+      appendedRows.push({ values: row.map(value => ({ userEnteredValue: { stringValue: value } })) });
+    } else if (editorEmail && String(row[3]).trim().toLowerCase() !== editorEmail.trim().toLowerCase()) {
+      // A manager edits other casts' sales; their personal goals may be saved concurrently.
+      requests.push(choreiRowUpdate(sheetId, entry.sheetRow, 0, row.slice(0, 6)));
+      requests.push(choreiRowUpdate(sheetId, entry.sheetRow, 11, [row[11]]));
+    } else {
+      requests.push(choreiRowUpdate(sheetId, entry.sheetRow, 0, row));
+    }
+  });
 
-  // Write all at once, then clear leftover rows if needed
-  const writes = [];
-  if (allData.length > 0) {
-    writes.push(updateRange(DATA_SPREADSHEET_ID, `chorei!A2:L${allData.length + 1}`, allData));
+  allRows.forEach((row, index) => {
+    const key = choreiCastKey(row[2], row[3]);
+    if (row[0] === date && row[1] === storeCode && removedKeys.has(key) && !requestedKeys.has(key)) {
+      // Keep the row occupied so a delayed save cannot target a newly appended cast.
+      requests.push(choreiRowUpdate(sheetId, index + 2, 0, [date, storeCode, ...Array(9).fill(''), nowISO()]));
+    }
+  });
+  if (appendedRows.length) {
+    requests.push({ appendCells: { sheetId, rows: appendedRows, fields: 'userEnteredValue' } });
   }
-  if (allRows.length > allData.length) {
-    writes.push(clearRange(DATA_SPREADSHEET_ID, `chorei!A${allData.length + 2}:L${allRows.length + 1}`));
-  }
-  await Promise.all(writes);
+  // Apply additions, edits and removals atomically without moving any existing row.
+  if (requests.length) await batchUpdateSpreadsheet(DATA_SPREADSHEET_ID, requests);
 
   invalidateCache('chorei');
+  invalidateDashboardCache();
 }
 
 /**
  * Update a single cast's goal in chorei
  */
 async function saveCastGoal(date, storeCode, gmail, goalData) {
-  const allRows = await getRows(DATA_SPREADSHEET_ID, 'chorei!A2:L10000');
-  const rowIndex = allRows.findIndex(r => r[0] === date && r[1] === storeCode && r[3] === gmail);
+  const allRows = await getRows(DATA_SPREADSHEET_ID, CHOREI_RANGE);
+  const entry = getLatestChoreiEntries(allRows).find(({ values: row }) =>
+    row[0] === date && row[1] === storeCode && choreiCastKey(row[2], row[3]) === choreiCastKey(goalData.castName, gmail));
+  const sheetId = await getChoreiSheetId();
 
-  if (rowIndex === -1) {
+  if (!entry) {
     // 朝礼に未追加 → 自分の行を自動作成
     const newRow = [
       date, storeCode, goalData.castName || '', gmail,
@@ -157,21 +235,22 @@ async function saveCastGoal(date, storeCode, gmail, goalData) {
       goalData.pickupDestination || '',
       nowISO(),
     ];
-    await appendRows(DATA_SPREADSHEET_ID, 'chorei!A:L', [newRow]);
+    await batchUpdateSpreadsheet(DATA_SPREADSHEET_ID, [{ appendCells: {
+      sheetId,
+      rows: [{ values: newRow.map(value => ({ userEnteredValue: { stringValue: String(value) } })) }],
+      fields: 'userEnteredValue',
+    } }]);
     invalidateCache('chorei');
+    invalidateDashboardCache();
     return true;
   }
 
-  const row = allRows[rowIndex];
-  row[6] = String(goalData.expectedVisitors || 0);
-  row[7] = goalData.goal || '';
-  row[9] = goalData.needsPickup ? '1' : '0';
-  row[10] = goalData.pickupDestination || '';
-  row[11] = nowISO();
-
-  const sheetRow = rowIndex + 2;
-  await updateRange(DATA_SPREADSHEET_ID, `chorei!A${sheetRow}:L${sheetRow}`, [row]);
+  await batchUpdateSpreadsheet(DATA_SPREADSHEET_ID, [
+    choreiRowUpdate(sheetId, entry.sheetRow, 6, [String(goalData.expectedVisitors || 0), goalData.goal || '']),
+    choreiRowUpdate(sheetId, entry.sheetRow, 9, [goalData.needsPickup ? '1' : '0', goalData.pickupDestination || '', nowISO()]),
+  ]);
   invalidateCache('chorei');
+  invalidateDashboardCache();
   return true;
 }
 
@@ -180,7 +259,7 @@ async function saveCastGoal(date, storeCode, gmail, goalData) {
  */
 async function getCastStores(date, gmail) {
   const rows = await getChoreiRows();
-  return rows
+  return getLatestChoreiEntries(rows).map(entry => entry.values)
     .filter(r => r[0] === date && r[3] === gmail)
     .map(r => ({ storeCode: r[1] }));
 }
@@ -190,7 +269,7 @@ async function getCastStores(date, gmail) {
  */
 async function getPickupList(date) {
   const rows = await getChoreiRows();
-  return rows
+  return getLatestChoreiEntries(rows).map(entry => entry.values)
     .filter(r => r[0] === date && (r[9] === '1' || r[9] === 'true'))
     .map(r => ({
       castName: r[2] || '',
@@ -208,7 +287,7 @@ async function getShureiByDateStore(date, storeCode) {
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
-  const rows = await getRows(DATA_SPREADSHEET_ID, 'shurei!A2:E5000');
+  const rows = await getRows(DATA_SPREADSHEET_ID, SHUREI_RANGE);
   const row = rows.find(r => r[0] === date && r[1] === storeCode);
   if (!row) return null;
   const result = {
@@ -220,7 +299,7 @@ async function getShureiByDateStore(date, storeCode) {
 }
 
 async function saveShurei(date, storeCode, data) {
-  const allRows = await getRows(DATA_SPREADSHEET_ID, 'shurei!A2:E5000');
+  const allRows = await getRows(DATA_SPREADSHEET_ID, SHUREI_RANGE);
   const rowIndex = allRows.findIndex(r => r[0] === date && r[1] === storeCode);
 
   const newRow = [date, storeCode, String(data.salesToday || 0), String(data.monthlySales || 0), nowISO()];
@@ -232,6 +311,7 @@ async function saveShurei(date, storeCode, data) {
     await appendRows(DATA_SPREADSHEET_ID, 'shurei!A:E', [newRow]);
   }
   invalidateCache('shurei');
+  invalidateDashboardCache();
 }
 
 // =====================================================
@@ -866,8 +946,8 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
     .filter(name => availableSelfEvalRanges.has(name));
 
   const ranges = [
-    'shurei!A2:E5000',
-    'chorei!A2:L10000',
+    SHUREI_RANGE,
+    CHOREI_RANGE,
     'issues!A2:I5000',
   ];
   const issuesResultIndex = 2;
@@ -920,7 +1000,7 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
     : 'shurei';
 
   // Attendance (chorei)
-  const attendance = (results[1].values || [])
+  const attendance = getLatestChoreiEntries(results[1].values || []).map(entry => entry.values)
     .filter(r => inRange(r[0]) && matchStore(r[1]))
     .map(r => ({
       date: r[0],
