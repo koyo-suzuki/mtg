@@ -46,6 +46,13 @@ function getBusinessDate() {
   return `${y}-${m}-${d}`;
 }
 
+function requireCurrentBusinessDate(req, res, next) {
+  if (req.body?.date !== getBusinessDate()) {
+    return res.status(409).json({ success: false, error: '画面を再読み込みしてから保存してください' });
+  }
+  next();
+}
+
 function getRemoteOrderBusinessDate() {
   const now = new Date();
   const jst = new Date(now.getTime() + (9 * 60 * 60 * 1000));
@@ -272,12 +279,12 @@ app.get('/api/cast-master', async (req, res) => {
 /**
  * 朝礼データ保存（店責用）
  */
-app.post('/api/chorei', async (req, res) => {
-  const { storeCode, casts } = req.body;
+app.post('/api/chorei', requireCurrentBusinessDate, async (req, res) => {
+  const { storeCode, casts, removedCasts } = req.body;
   const date = getBusinessDate();
 
   try {
-    await dataStore.saveChoreiCasts(date, storeCode, casts);
+    await dataStore.saveChoreiCasts(date, storeCode, casts, req.user.email, removedCasts);
     res.json({ success: true });
   } catch (error) {
     console.error('Chorei save error:', error);
@@ -303,7 +310,7 @@ app.get('/api/chorei/:storeCode', async (req, res) => {
 /**
  * キャスト目標保存
  */
-app.post('/api/cast-goal', async (req, res) => {
+app.post('/api/cast-goal', requireCurrentBusinessDate, async (req, res) => {
   const { storeCode, gmail, goal, expectedVisitors, needsPickup, pickupDestination, castName } = req.body;
   const date = getBusinessDate();
 
@@ -374,7 +381,7 @@ app.get('/api/pickup-list', async (req, res) => {
 // 終礼API
 // =====================================================
 
-app.post('/api/shurei', async (req, res) => {
+app.post('/api/shurei', requireCurrentBusinessDate, async (req, res) => {
   const { storeCode, salesToday, monthlySales } = req.body;
   const date = getBusinessDate();
 

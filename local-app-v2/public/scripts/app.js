@@ -13,6 +13,7 @@ const State = {
   businessDate: null,
   castMaster: [],
   choreiCasts: [],
+  choreiRemovals: [],
   selectedScore: null,
   managerSelectedScore: null,
   castEvalRecordRow: null,
@@ -708,6 +709,8 @@ function onCastSearch() {
 
 function addCastToChorei(masterCast) {
   if (State.choreiCasts.find(c => c.gmail === masterCast.gmail)) return;
+  State.choreiRemovals = State.choreiRemovals.filter(c =>
+    c.storeCode !== State.storeCode || c.date !== State.businessDate || c.gmail !== masterCast.gmail);
 
   State.choreiCasts.push({
     castName: masterCast.castName,
@@ -833,6 +836,8 @@ function renderChoreiCastList() {
   container.querySelectorAll('[data-remove]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const idx = parseInt(e.target.dataset.remove);
+      const cast = State.choreiCasts[idx];
+      State.choreiRemovals.push({ storeCode: State.storeCode, date: State.businessDate, gmail: cast.gmail, castName: cast.castName });
       State.choreiCasts.splice(idx, 1);
       renderChoreiCastList();
       doSaveChorei(); // キャスト削除時は即保存
@@ -910,10 +915,7 @@ async function onSaveChorei() {
     };
   });
 
-  const result = await api('/api/chorei', {
-    method: 'POST',
-    body: JSON.stringify({ storeCode: State.storeCode, casts })
-  });
+  const result = await saveChoreiPayload(casts);
 
   stopSaving(btn);
 
@@ -1056,7 +1058,7 @@ async function onSaveCastGoal() {
   const pickupDestination = document.getElementById('castPickupDest').value.trim();
   const result = await api('/api/cast-goal', {
     method: 'POST',
-    body: JSON.stringify({ storeCode: State.storeCode, gmail: State.gmail, goal, expectedVisitors, needsPickup, pickupDestination })
+    body: JSON.stringify({ date: State.businessDate, storeCode: State.storeCode, gmail: State.gmail, goal, expectedVisitors, needsPickup, pickupDestination })
   });
 
   stopSaving(btn);
@@ -1473,6 +1475,7 @@ async function onSaveShurei() {
   const result = await api('/api/shurei', {
     method: 'POST',
     body: JSON.stringify({
+      date: State.businessDate,
       storeCode: State.storeCode,
       salesToday: parseInt(document.getElementById('shureiSalesTotal').value) || 0,
       monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0
@@ -2709,7 +2712,6 @@ function showAutoSaveStatus(elementId, status, message) {
   } else if (status === 'error') {
     el.className = 'autosave-status autosave-error';
     el.textContent = message || '保存に失敗しました';
-    el._hideTimer = setTimeout(() => el.classList.add('hidden'), 5000);
   }
 }
 
@@ -2718,9 +2720,9 @@ const autoSaveLocks = {};
 
 function getAutoSaveErrorMessage(result) {
   if (isQuotaMessage(result?.error)) {
-    return '混雑中です。少し待って再試行します';
+    return '混雑中です。少し待ってから再度保存してください';
   }
-  return '保存に失敗しました';
+  return result?.error || '保存に失敗しました';
 }
 
 async function runAutoSave(key, elementId, saveFn) {
@@ -2796,17 +2798,29 @@ async function doSaveChorei() {
       };
     });
 
-    return api('/api/chorei', {
-      method: 'POST',
-      body: JSON.stringify({ storeCode: State.storeCode, casts }),
-    });
+    return saveChoreiPayload(casts);
   });
+}
+
+async function saveChoreiPayload(casts) {
+  const storeCode = State.storeCode;
+  const removals = State.choreiRemovals.filter(c => c.storeCode === storeCode && c.date === State.businessDate);
+  const result = await api('/api/chorei', {
+    method: 'POST',
+    body: JSON.stringify({ date: State.businessDate, storeCode, casts, removedCasts: removals.map(c => ({ gmail: c.gmail, castName: c.castName })) }),
+  });
+  if (result.success) {
+    const savedRemovals = new Set(removals);
+    State.choreiRemovals = State.choreiRemovals.filter(c => !savedRemovals.has(c));
+  }
+  return result;
 }
 
 async function doSaveShurei() {
   return runAutoSave('shurei', 'shureiAutoSave', () => api('/api/shurei', {
     method: 'POST',
     body: JSON.stringify({
+      date: State.businessDate,
       storeCode: State.storeCode,
       salesToday: parseInt(document.getElementById('shureiSalesTotal').value) || 0,
       monthlySales: parseInt(document.getElementById('shureiMonthlySales').value) || 0,
@@ -2818,6 +2832,7 @@ async function doSaveCastGoal() {
   return runAutoSave('castGoal', 'castGoalAutoSave', () => api('/api/cast-goal', {
     method: 'POST',
     body: JSON.stringify({
+      date: State.businessDate,
       storeCode: State.storeCode,
       gmail: State.gmail,
       castName: State.castName || State.displayName,
