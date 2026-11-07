@@ -26,6 +26,11 @@ function loadWithClient(options = {}) {
   const calls = [];
   const months = options.months || ['2026-11'];
   const client = {
+    async getRows(id, range) {
+      calls.push({ type: 'getRows', id, range });
+      if (options.targetsError) throw new Error(options.targetsError);
+      return options.targets || [];
+    },
     async getSpreadsheetMetadata(id) {
       calls.push({ type: 'metadata', id });
       if (id === 'test-operational-data') return { namedRanges: [], sheets: [] };
@@ -166,4 +171,47 @@ test('frontend sums all stores for monthly metrics and preserves real zero vs mi
   assert.equal(context.buildSalesSeries(context.State.dashData, ['2026-11-02'])[0], null);
   assert.equal(context.buildMonthlyProgressData().brands[0].achievementRate, null);
   assert.equal(context.buildMonthlyProgressData().total.yesterdaySales, null);
+});
+
+test('monthly targets are private, filtered by month/store, and tolerate an absent optional tab', async () => {
+  const targets = [
+    ['2026-10', 'store_007', 800],
+    ['2026-11', 'store_007', '¥1,200'],
+    ['2026-11', 'store_008', 600],
+    ['2026-12', 'store_007', 900],
+  ];
+  const { dataStore } = loadWithClient({ targets });
+  const result = await dataStore.getDashboardSummary('2026-11-01', '2026-11-02', 'store_007');
+  assert.deepEqual(result.salesTargets, { '2026-11': { store_007: 1200 } });
+  const absent = loadWithClient({ targetsError: 'Unable to parse range: sales_targets!A2:C' });
+  assert.deepEqual((await absent.dataStore.getDashboardSummary('2026-11-01', '2026-11-02', 'all')).salesTargets, {});
+  const denied = loadWithClient({ targetsError: 'permission denied' });
+  await assert.rejects(denied.dataStore.getDashboardSummary('2026-11-01', '2026-11-02', 'all'), /permission denied/);
+});
+
+test('monthly targets reject ambiguous or invalid amounts and preserve an explicit zero', () => {
+  const { parseSalesTargets } = require('../src/sheets/sales-targets');
+  const parse = rows => parseSalesTargets(rows, '2026-11-01', '2026-11-30', 'all');
+  assert.deepEqual(parse([['2026-11', 'store_007', 0]]), { '2026-11': { store_007: 0 } });
+  assert.throws(() => parse([['2026-11', 'store_007', 1], ['2026-11', 'store_007', 2]]), /重複/);
+  for (const amount of ['', -1, '#REF!', 1.5]) {
+    assert.throws(() => parse([['2026-11', 'store_007', amount]]), /金額/);
+  }
+});
+
+test('monthly progress uses the selected month targets for stores, brands and totals only', () => {
+  const context = frontend(parseManagementMonth(monthValues(), '2026-11').filter(row => row.date <= '2026-11-02'));
+  context.State.dashData.salesTargets = {
+    '2026-10': { store_007: 9000, store_008: 9000 },
+    '2026-11': { store_007: 1200, store_008: 600 },
+  };
+  let progress = context.buildMonthlyProgressData();
+  assert.equal(progress.brands[0].stores[0].monthlyTarget, 1200);
+  assert.equal(progress.brands[0].monthlyTarget, 1800);
+  assert.equal(progress.total.monthlyTarget, 1800);
+  assert.equal(progress.total.achievementRate, 317 / 1800 * 100);
+  delete context.State.dashData.salesTargets['2026-11'];
+  assert.equal(context.buildMonthlyProgressData().total.monthlyTarget, 2000, 'other months must not override defaults');
+  context.State.dashData.salesTargets['2026-11'] = { store_007: 0 };
+  assert.equal(context.buildMonthlyProgressData().total.monthlyTarget, 1000, 'zero must not fall back to the default');
 });

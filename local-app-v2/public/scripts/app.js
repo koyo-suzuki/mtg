@@ -2357,7 +2357,8 @@ function buildMonthlyProgressData() {
     }
 
     const storeSales = salesByStore[store.code] || { yesterdaySales: null, monthlySales: null, latestMonthlyDate: '' };
-    const monthlyTarget = store.monthlyTarget || store.monthly_target || 0;
+    const monthlyTarget = data.salesTargets?.[month]?.[store.code]
+      ?? store.monthlyTarget ?? store.monthly_target ?? 0;
     const rate = monthlyTarget > 0 && Number.isFinite(storeSales.monthlySales) ? (storeSales.monthlySales / monthlyTarget) * 100 : null;
     const row = {
       storeCode: store.code,

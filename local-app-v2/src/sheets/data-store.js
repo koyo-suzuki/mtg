@@ -14,6 +14,7 @@ const {
   parseAirregiSalesCsv,
 } = require('../airregi/sales-csv');
 const { getManagementSales } = require('./sales-master');
+const { parseSalesTargets } = require('./sales-targets');
 
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
 const AIRREGI_SALES_RANGE = `${AIRREGI_SALES_SHEET_NAME}!A2:G100000`;
@@ -959,10 +960,12 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
   const selfEvalResultStartIndex = ranges.length;
   ranges.push(...selfEvalRanges);
 
-  const [results, managementSales] = await Promise.all([
+  const [results, managementSales, targetRows] = await Promise.all([
     batchGet(DATA_SPREADSHEET_ID, ranges),
     getManagementSales(from, to, storeCode),
+    getOptionalRows(DATA_SPREADSHEET_ID, 'sales_targets!A2:C'),
   ]);
+  const salesTargets = parseSalesTargets(targetRows, from, to, storeCode);
 
   const inRange = (d) => d >= from && d <= to;
   const matchStore = (s) => storeCode === 'all' || s === storeCode;
@@ -1029,7 +1032,7 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
       }))
     : [];
 
-  const data = { ...managementSales, attendance, evaluations, issues, managerFeedback };
+  const data = { ...managementSales, salesTargets, attendance, evaluations, issues, managerFeedback };
   setDashCache(cacheKey, data);
   return data;
 }
