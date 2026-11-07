@@ -13,6 +13,7 @@ const {
   AIRREGI_SALES_HEADER,
   parseAirregiSalesCsv,
 } = require('../airregi/sales-csv');
+const { getManagementSales } = require('./sales-master');
 
 const DATA_SPREADSHEET_ID = process.env.DATA_SPREADSHEET_ID;
 const AIRREGI_SALES_RANGE = `${AIRREGI_SALES_SHEET_NAME}!A2:G100000`;
@@ -834,7 +835,7 @@ async function updateRemoteOrderReview(slipKey, review) {
 
 const dashboardCache = {};
 const DASH_CACHE_TTL = 5 * 60 * 1000;           // 5 min (includes today)
-const DASH_HISTORICAL_CACHE_TTL = 30 * 60 * 1000; // 30 min (past-only ranges)
+const DASH_HISTORICAL_CACHE_TTL = 5 * 60 * 1000; // Master corrections also refresh within 5 min.
 
 function invalidateDashboardCache() {
   Object.keys(dashboardCache).forEach(k => delete dashboardCache[k]);
@@ -946,11 +947,10 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
     .filter(name => availableSelfEvalRanges.has(name));
 
   const ranges = [
-    SHUREI_RANGE,
     CHOREI_RANGE,
     'issues!A2:I5000',
   ];
-  const issuesResultIndex = 2;
+  const issuesResultIndex = 1;
   let managerFeedbackResultIndex = null;
   if (includeManagerFeedback) {
     managerFeedbackResultIndex = ranges.length;
@@ -959,48 +959,16 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
   const selfEvalResultStartIndex = ranges.length;
   ranges.push(...selfEvalRanges);
 
-  const [results, airregiRows] = await Promise.all([
+  const [results, managementSales] = await Promise.all([
     batchGet(DATA_SPREADSHEET_ID, ranges),
-    getOptionalRows(DATA_SPREADSHEET_ID, AIRREGI_SALES_RANGE),
+    getManagementSales(from, to, storeCode),
   ]);
 
   const inRange = (d) => d >= from && d <= to;
   const matchStore = (s) => storeCode === 'all' || s === storeCode;
 
-  // Sales (shurei)
-  const shureiSales = (results[0].values || [])
-    .filter(r => inRange(r[0]) && matchStore(r[1]))
-    .map(r => ({
-      date: r[0],
-      storeCode: r[1],
-      salesToday: parseSheetNumber(r[2]),
-      monthlySales: parseSheetNumber(r[3]),
-      source: 'shurei',
-    }));
-
-  const airregiSales = (airregiRows || [])
-    .filter(r => inRange(r[0]) && matchStore(r[1]))
-    .map(r => ({
-      date: r[0],
-      storeCode: r[1],
-      salesToday: parseSheetNumber(r[2]),
-      monthlySales: parseSheetNumber(r[3]),
-      source: 'airregi_sales_daily',
-      syncedAt: r[5] || '',
-      sourceUpdatedAt: r[6] || '',
-    }));
-
-  const airregiKeys = new Set(airregiSales.map(r => `${r.date}\t${r.storeCode}`));
-  const shureiFallbackSales = shureiSales.filter(r => !airregiKeys.has(`${r.date}\t${r.storeCode}`));
-  const sales = airregiSales.length > 0
-    ? [...airregiSales, ...shureiFallbackSales]
-    : shureiSales;
-  const salesSource = airregiSales.length > 0
-    ? (shureiFallbackSales.length > 0 ? 'mixed_airregi_shurei' : 'airregi_sales_daily')
-    : 'shurei';
-
   // Attendance (chorei)
-  const attendance = getLatestChoreiEntries(results[1].values || []).map(entry => entry.values)
+  const attendance = getLatestChoreiEntries(results[0].values || []).map(entry => entry.values)
     .filter(r => inRange(r[0]) && matchStore(r[1]))
     .map(r => ({
       date: r[0],
@@ -1061,7 +1029,7 @@ async function getDashboardSummary(from, to, storeCode, options = {}) {
       }))
     : [];
 
-  const data = { sales, salesSource, attendance, evaluations, issues, managerFeedback };
+  const data = { ...managementSales, attendance, evaluations, issues, managerFeedback };
   setDashCache(cacheKey, data);
   return data;
 }

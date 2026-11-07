@@ -2259,23 +2259,45 @@ function fmtSignedDecimal(n, digits = 1) {
 }
 
 function buildDashDelta(current, compare, formatter = fmtSignedNumber, unit = '') {
-  if (!State.dashCompareData || State.dashCompareMode === 'none' || compare === null || compare === undefined) return '';
+  if (!State.dashCompareData || State.dashCompareMode === 'none' || !Number.isFinite(current) || !Number.isFinite(compare)) return '';
   const delta = current - compare;
   const pct = compare ? ` / ${fmtPercent((delta / compare) * 100)}` : '';
   const cls = delta > 0 ? 'dash-metric-up' : delta < 0 ? 'dash-metric-down' : 'is-muted';
   return `<div class="dash-metric-sub ${cls}">${escapeHtml(getDashCompareLabel())} ${formatter(delta)}${unit}${pct}</div>`;
 }
 
+function sumDashSales(values) {
+  return values.length && values.every(Number.isFinite) ? values.reduce((sum, value) => sum + value, 0) : null;
+}
+
+function fmtDashSales(value) {
+  return Number.isFinite(value) ? fmtYen(value) : '未入力';
+}
+
 function aggregateSalesTotal(data) {
-  return (data?.sales || []).reduce((sum, s) => sum + (s.salesToday || 0), 0);
+  if (data?.missingSalesMonths?.length) return null;
+  return sumDashSales((data?.sales || []).map(s => s.salesToday));
 }
 
 function buildSalesSeries(data, dates) {
   const byDate = {};
   (data?.sales || []).forEach(s => {
-    byDate[s.date] = (byDate[s.date] || 0) + (s.salesToday || 0);
+    if (!byDate[s.date]) byDate[s.date] = [];
+    byDate[s.date].push(s.salesToday);
   });
-  return dates.map(d => byDate[d] || 0);
+  return dates.map(d => sumDashSales(byDate[d] || []));
+}
+
+function getLatestMonthlySales(data) {
+  const month = State.dashDateTo.slice(0, 7);
+  if (data?.missingSalesMonths?.includes(month)) return null;
+  const latestByStore = new Map();
+  (data?.sales || []).filter(s => s.date.slice(0, 7) === month).forEach(s => {
+    const previous = latestByStore.get(s.storeCode);
+    if (!previous || s.date > previous.date) latestByStore.set(s.storeCode, s);
+  });
+  const stores = (State.dashStores || []).filter(store => !State.dashStoreCode || State.dashStoreCode === 'all' || store.code === State.dashStoreCode);
+  return sumDashSales(stores.map(store => latestByStore.get(store.code)?.monthlySales));
 }
 
 function getDashRelativeDate(baseDate, offsetDays) {
@@ -2306,13 +2328,16 @@ function buildMonthlyProgressData() {
   data.sales.forEach(s => {
     if (!s.date || s.date > yesterday) return;
     if (!salesByStore[s.storeCode]) {
-      salesByStore[s.storeCode] = { yesterdaySales: 0, monthlySales: 0, latestMonthlyDate: '' };
+      salesByStore[s.storeCode] = { yesterdaySales: null, monthlySales: null, latestMonthlyDate: '', latestDate: '' };
     }
     const storeSales = salesByStore[s.storeCode];
-    if (s.date === yesterday) storeSales.yesterdaySales += s.salesToday || 0;
-    if (s.date && s.date.slice(0, 7) === month && s.date >= storeSales.latestMonthlyDate) {
-      storeSales.latestMonthlyDate = s.date;
-      storeSales.monthlySales = s.monthlySales || 0;
+    if (s.date === yesterday) storeSales.yesterdaySales = s.salesToday;
+    if (s.date.slice(0, 7) === month) {
+      if (s.date >= storeSales.latestDate) {
+        storeSales.latestDate = s.date;
+        storeSales.monthlySales = s.monthlySales;
+      }
+      if (Number.isFinite(s.salesToday) && s.date > storeSales.latestMonthlyDate) storeSales.latestMonthlyDate = s.date;
     }
   });
 
@@ -2331,9 +2356,9 @@ function buildMonthlyProgressData() {
       };
     }
 
-    const storeSales = salesByStore[store.code] || { yesterdaySales: 0, monthlySales: 0, latestMonthlyDate: '' };
+    const storeSales = salesByStore[store.code] || { yesterdaySales: null, monthlySales: null, latestMonthlyDate: '' };
     const monthlyTarget = store.monthlyTarget || store.monthly_target || 0;
-    const rate = monthlyTarget > 0 ? (storeSales.monthlySales / monthlyTarget) * 100 : null;
+    const rate = monthlyTarget > 0 && Number.isFinite(storeSales.monthlySales) ? (storeSales.monthlySales / monthlyTarget) * 100 : null;
     const row = {
       storeCode: store.code,
       storeName: store.name,
@@ -2344,20 +2369,20 @@ function buildMonthlyProgressData() {
       latestMonthlyDate: storeSales.latestMonthlyDate,
     };
 
-    brandMap[brandCode].yesterdaySales += row.yesterdaySales;
-    brandMap[brandCode].monthlySales += row.monthlySales;
+    brandMap[brandCode].yesterdaySales = sumDashSales([brandMap[brandCode].yesterdaySales, row.yesterdaySales]);
+    brandMap[brandCode].monthlySales = sumDashSales([brandMap[brandCode].monthlySales, row.monthlySales]);
     brandMap[brandCode].monthlyTarget += row.monthlyTarget;
     brandMap[brandCode].stores.push(row);
   });
 
   const brands = Object.values(brandMap).map(brand => ({
     ...brand,
-    achievementRate: brand.monthlyTarget > 0 ? (brand.monthlySales / brand.monthlyTarget) * 100 : null,
+    achievementRate: brand.monthlyTarget > 0 && Number.isFinite(brand.monthlySales) ? (brand.monthlySales / brand.monthlyTarget) * 100 : null,
   }));
 
   const total = brands.reduce((acc, brand) => ({
-    yesterdaySales: acc.yesterdaySales + brand.yesterdaySales,
-    monthlySales: acc.monthlySales + brand.monthlySales,
+    yesterdaySales: sumDashSales([acc.yesterdaySales, brand.yesterdaySales]),
+    monthlySales: sumDashSales([acc.monthlySales, brand.monthlySales]),
     monthlyTarget: acc.monthlyTarget + brand.monthlyTarget,
   }), { yesterdaySales: 0, monthlySales: 0, monthlyTarget: 0 });
 
@@ -2367,7 +2392,7 @@ function buildMonthlyProgressData() {
     salesSource: data.salesSource || 'shurei',
     total: {
       ...total,
-      achievementRate: total.monthlyTarget > 0 ? (total.monthlySales / total.monthlyTarget) * 100 : null,
+      achievementRate: total.monthlyTarget > 0 && Number.isFinite(total.monthlySales) ? (total.monthlySales / total.monthlyTarget) * 100 : null,
     },
     brands,
   };
@@ -2385,7 +2410,9 @@ function renderMonthlyProgress(containerId) {
 
   const totalRateClass = getAchievementClass(progress.total.achievementRate);
   const brands = progress.brands.sort((a, b) => b.monthlySales - a.monthlySales);
-  const sourceLabel = progress.salesSource === 'airregi_sales_daily'
+  const sourceLabel = progress.salesSource === 'management_sales_master'
+    ? '営業管理売上（AirREGI売上＋Rose使用数）'
+    : progress.salesSource === 'airregi_sales_daily'
     ? 'Airレジ集計'
     : progress.salesSource === 'mixed_airregi_shurei'
       ? 'Airレジ集計 + 終礼暫定'
@@ -2396,11 +2423,11 @@ function renderMonthlyProgress(containerId) {
     <div class="dash-progress-total">
       <div>
         <span class="dash-progress-label">昨日売上</span>
-        <strong>${fmtYen(progress.total.yesterdaySales)}</strong>
+        <strong>${fmtDashSales(progress.total.yesterdaySales)}</strong>
       </div>
       <div>
         <span class="dash-progress-label">今月累計</span>
-        <strong>${fmtYen(progress.total.monthlySales)}</strong>
+        <strong>${fmtDashSales(progress.total.monthlySales)}</strong>
       </div>
       <div>
         <span class="dash-progress-label">月間目標</span>
@@ -2423,8 +2450,8 @@ function renderMonthlyProgress(containerId) {
           <span class="dash-brand-rate ${rateClass}">${fmtPercent(brand.achievementRate)}</span>
         </summary>
         <div class="dash-brand-summary">
-          <span>昨日 ${fmtYen(brand.yesterdaySales)}</span>
-          <span>今月 ${fmtYen(brand.monthlySales)}</span>
+          <span>昨日 ${fmtDashSales(brand.yesterdaySales)}</span>
+          <span>今月 ${fmtDashSales(brand.monthlySales)}</span>
           <span>目標 ${brand.monthlyTarget ? fmtYen(brand.monthlyTarget) : '未設定'}</span>
         </div>
         <div class="dash-store-progress-list">
@@ -2439,8 +2466,8 @@ function renderMonthlyProgress(containerId) {
             <span class="dash-store-progress-rate ${storeRateClass}">${fmtPercent(store.achievementRate)}</span>
           </div>
           <div class="dash-store-progress-values">
-            <span>昨日 ${fmtYen(store.yesterdaySales)}</span>
-            <span>今月 ${fmtYen(store.monthlySales)}</span>
+            <span>昨日 ${fmtDashSales(store.yesterdaySales)}</span>
+            <span>今月 ${fmtDashSales(store.monthlySales)}</span>
             <span>目標 ${store.monthlyTarget ? fmtYen(store.monthlyTarget) : '未設定'}</span>
           </div>
           ${store.latestMonthlyDate ? `<div class="dash-store-progress-date">最終入力 ${store.latestMonthlyDate}</div>` : ''}
@@ -2474,29 +2501,27 @@ function renderDashSalesTab() {
   // Metrics
   const totalSales = aggregateSalesTotal(data);
   const compareTotalSales = State.dashCompareData ? aggregateSalesTotal(State.dashCompareData) : null;
-  const latestMonthlySales = data.sales.length > 0
-    ? data.sales.reduce((best, s) => s.date > best.date ? s : best, data.sales[0]).monthlySales
-    : 0;
-  const avgDaily = dates.length > 0 ? Math.round(totalSales / dates.length) : 0;
-  const compareAvgDaily = compareDates.length > 0 && State.dashCompareData
+  const latestMonthlySales = getLatestMonthlySales(data);
+  const avgDaily = dates.length > 0 && Number.isFinite(totalSales) ? Math.round(totalSales / dates.length) : null;
+  const compareAvgDaily = compareDates.length > 0 && State.dashCompareData && Number.isFinite(compareTotalSales)
     ? Math.round(compareTotalSales / compareDates.length)
     : null;
 
   document.getElementById('dashSalesMetrics').innerHTML = `
     <div class="dash-metric">
-      <div class="dash-metric-label">期間合計</div>
-      <div class="dash-metric-value">${fmtYen(totalSales)}</div>
+      <div class="dash-metric-label">期間合計（営業管理売上）</div>
+      <div class="dash-metric-value">${fmtDashSales(totalSales)}</div>
       <div class="dash-metric-sub">${dates.length}日分</div>
       ${buildDashDelta(totalSales, compareTotalSales, fmtSignedYen)}
     </div>
     <div class="dash-metric">
       <div class="dash-metric-label">日平均</div>
-      <div class="dash-metric-value">${fmtYen(avgDaily)}</div>
+      <div class="dash-metric-value">${fmtDashSales(avgDaily)}</div>
       ${buildDashDelta(avgDaily, compareAvgDaily, fmtSignedYen)}
     </div>
     <div class="dash-metric">
       <div class="dash-metric-label">最新月次累計</div>
-      <div class="dash-metric-value">${fmtYen(latestMonthlySales)}</div>
+      <div class="dash-metric-value">${fmtDashSales(latestMonthlySales)}</div>
     </div>
   `;
 
