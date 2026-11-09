@@ -7,6 +7,7 @@ const { verifyGoogleToken } = require('./src/auth/middleware');
 const { authMiddleware } = require('./src/auth/middleware');
 const configReader = require('./src/sheets/config-reader');
 const dataStore = require('./src/sheets/data-store');
+const storeLeaders = require('./src/sheets/store-leaders');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -477,6 +478,99 @@ app.put('/api/issues/:id', async (req, res) => {
       res.json({ success: false, error: '伝言が見つかりません' });
     }
   } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// 店責・副店責の記録API
+// =====================================================
+
+const STORE_LEADER_ROLES = ['cast_manager', 'manager', 'senior_manager', 'executive'];
+
+function requireStoreLeaderRole(req, res, next) {
+  if (!STORE_LEADER_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+  next();
+}
+
+app.get('/api/store-leaders', async (req, res) => {
+  const date = getBusinessDate();
+  try {
+    const leaders = await storeLeaders.getStoreLeaders(date);
+    res.json({ success: true, date, leaders });
+  } catch (error) {
+    console.error('Store leaders error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/store-leaders/enter', requireStoreLeaderRole, async (req, res) => {
+  const { storeCode, kenninStoreCodes, position } = req.body || {};
+  try {
+    const result = await storeLeaders.enterStoreLeader({
+      date: getBusinessDate(),
+      storeCodes: [storeCode, ...(Array.isArray(kenninStoreCodes) ? kenninStoreCodes : [])],
+      position,
+      gmail: req.user.email,
+      castName: req.user.castName || req.user.displayName || '',
+      editorEmail: req.user.email,
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Store leader enter error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/store-leaders/handover', requireStoreLeaderRole, async (req, res) => {
+  const { id, toGmail } = req.body || {};
+  try {
+    const casts = await configReader.getCastMembers();
+    const target = casts.find(c => c.gmail === String(toGmail || '').trim().toLowerCase());
+    if (!target) return res.json({ success: false, error: '次の担当が見つかりません' });
+    await storeLeaders.handoverStoreLeader({
+      date: getBusinessDate(), id, toGmail: target.gmail, toCastName: target.castName, editorEmail: req.user.email,
+    });
+    res.json({ success: true, castName: target.castName });
+  } catch (error) {
+    console.error('Store leader handover error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/store-leaders/end', requireStoreLeaderRole, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const result = await storeLeaders.endStoreLeaders({ date: getBusinessDate(), ids, editorEmail: req.user.email });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Store leader end error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/store-leaders/delete', requireStoreLeaderRole, async (req, res) => {
+  try {
+    await storeLeaders.deleteStoreLeader({ date: getBusinessDate(), id: req.body?.id, editorEmail: req.user.email });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Store leader delete error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/store-leaders/summary', async (req, res) => {
+  if (!DASHBOARD_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month : getBusinessDate().slice(0, 7);
+  try {
+    const summary = await storeLeaders.getStoreLeaderSummary({ month, storeCode: req.query.storeCode || 'all' });
+    res.json({ success: true, month, summary });
+  } catch (error) {
+    console.error('Store leader summary error:', error);
     res.json({ success: false, error: error.message });
   }
 });

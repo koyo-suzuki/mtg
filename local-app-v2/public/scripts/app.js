@@ -377,6 +377,9 @@ function setupEvents() {
   });
   document.getElementById('roleSelectBack').addEventListener('click', showLogin);
 
+  // 店責・副店責の記録
+  setupLeaderEvents();
+
   document.getElementById('castStoreBack').addEventListener('click', () => {
     if (shouldUseRoleSelect(State.role)) {
       showRoleSelectScreen();
@@ -562,7 +565,7 @@ async function showRoleSelectScreen() {
   document.getElementById('roleSelectScreen').classList.remove('hidden');
   document.getElementById('roleSelectGreeting').textContent = `${State.displayName} さん`;
   document.querySelector('#roleSelectManager .store-item-name').textContent =
-    State.role === 'manager' ? '管理画面に入る' : '店責として入る';
+    State.role === 'manager' ? '管理画面に入る' : '店責・副店責として入る';
   document.getElementById('managerMonthlyProgress').innerHTML = '<div class="dash-progress-loading">読み込み中...</div>';
   await loadTopMonthlyProgress('managerMonthlyProgress');
   saveSession('roleSelect');
@@ -577,25 +580,51 @@ async function showStoreSelection() {
   document.getElementById('castStoreScreen').classList.remove('hidden');
 
   const greeting = State.isManager
-    ? `${State.displayName} さん（店責）`
+    ? `${State.displayName} さん（店責・副店責）`
     : `${State.displayName} さん、こんにちは`;
   document.getElementById('castStoreGreeting').textContent = greeting;
 
-  // 全店舗一覧
-  const result = await api('/api/stores');
+  // 全店舗一覧（店責モードでは今の店責・副店責も表示）
+  const [result] = await Promise.all([
+    api('/api/stores'),
+    State.isManager ? loadStoreLeaders() : Promise.resolve(),
+  ]);
   const container = document.getElementById('castStoreList');
   container.innerHTML = '';
 
   if (!result.success) return;
+  State.leaderStores = result.stores || [];
 
   result.stores.forEach(store => {
     const el = document.createElement('div');
     el.className = 'store-item';
-    el.innerHTML = `
-      <span class="store-item-name">${store.name}</span>
-      <span class="store-item-arrow">&rarr;</span>
-    `;
+    if (State.isManager) {
+      const mine = leaderActiveOf(store.code).find(r => r.gmail === myGmail());
+      const leaders = leaderActiveOf(store.code, 'leader');
+      const subs = leaderActiveOf(store.code, 'sub');
+      const names = rows => rows.map(r => escapeHtml(r.castName)).join('、') || '—';
+      const badge = mine
+        ? `<span class="badge badge-self">あなたが${leaderPositionLabel(mine.position)}</span>`
+        : !leaders.length ? '<span class="badge badge-leader-none">店責 未記録</span>' : '';
+      if (mine) el.classList.add('is-mine');
+      el.innerHTML = `
+        <div>
+          <div class="store-item-name">${escapeHtml(store.name)}</div>
+          <div class="store-item-sub">店責：${names(leaders)}　副店責：${names(subs)}</div>
+        </div>
+        <span class="store-item-right">${badge}<span class="store-item-arrow">&rarr;</span></span>
+      `;
+    } else {
+      el.innerHTML = `
+        <span class="store-item-name">${store.name}</span>
+        <span class="store-item-arrow">&rarr;</span>
+      `;
+    }
     el.addEventListener('click', async () => {
+      if (State.isManager && !leaderActiveOf(store.code).some(r => r.gmail === myGmail())) {
+        openLeaderModal({ type: 'enter', storeCode: store.code });
+        return;
+      }
       State.storeCode = store.code;
       State.storeName = store.name;
 
@@ -622,7 +651,7 @@ async function showManagerScreen() {
   document.getElementById('managerDate').textContent = State.businessDate;
 
   await loadCastMaster();
-  await loadChoreiData();
+  await Promise.all([loadChoreiData(), loadLeaderCard()]);
 
   // 店責（cast_manager）は自分を自動追加
   if (State.role === 'cast_manager') {
@@ -1452,6 +1481,7 @@ function onTabChange(e) {
   if (tabName === 'dashSales') renderDashSalesTab();
   if (tabName === 'dashIssues') renderDashIssuesTab();
   if (tabName === 'dashManagerFeedback') renderDashManagerFeedbackTab();
+  if (tabName === 'dashStoreLeaders') renderDashStoreLeadersTab();
 }
 
 // =====================================================
@@ -2214,6 +2244,7 @@ function renderActiveDashTab() {
   if (name === 'dashSales') renderDashSalesTab();
   else if (name === 'dashIssues') renderDashIssuesTab();
   else if (name === 'dashManagerFeedback') renderDashManagerFeedbackTab();
+  else if (name === 'dashStoreLeaders') renderDashStoreLeadersTab();
 }
 
 // ---- Chart helper ----
@@ -2974,4 +3005,424 @@ function stopSaving(btn) {
   if (!btn || !btn._originalHTML) return;
   btn.classList.remove('is-saving');
   btn.innerHTML = btn._originalHTML;
+}
+
+// =====================================================
+// 店責・副店責の記録
+// =====================================================
+
+const LEADER_POSITIONS = { leader: '店責', sub: '副店責' };
+let leaderModalState = null;
+
+function leaderPositionLabel(position) {
+  return LEADER_POSITIONS[position] || '';
+}
+
+function myGmail() {
+  return String(State.gmail || '').trim().toLowerCase();
+}
+
+function leaderStoreName(code) {
+  const stores = (State.leaderStores && State.leaderStores.length) ? State.leaderStores : (State.dashStores || []);
+  return stores.find(s => s.code === code)?.name || code;
+}
+
+function fmtLeaderTime(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadStoreLeaders() {
+  const result = await api('/api/store-leaders');
+  State.storeLeaders = result.success ? (result.leaders || []) : [];
+  if (!result.success) showToast('error', result.error || '店責の記録を取得できませんでした');
+  return State.storeLeaders;
+}
+
+function leaderActiveOf(storeCode, position) {
+  return (State.storeLeaders || []).filter(r =>
+    r.storeCode === storeCode && !r.endAt && (!position || r.position === position));
+}
+
+function leaderKenninOf(record) {
+  return (State.storeLeaders || [])
+    .filter(r => r.id !== record.id && r.gmail === record.gmail && !r.endAt && r.storeCode !== record.storeCode)
+    .map(r => leaderStoreName(r.storeCode));
+}
+
+async function ensureLeaderStores() {
+  if (State.leaderStores && State.leaderStores.length) return;
+  const result = await api('/api/stores');
+  if (result.success) State.leaderStores = result.stores || [];
+}
+
+// ---- 店責画面のカード ----
+
+async function loadLeaderCard() {
+  await Promise.all([ensureLeaderStores(), loadStoreLeaders()]);
+  renderLeaderCard();
+}
+
+function renderLeaderCard() {
+  const body = document.getElementById('leaderCardBody');
+  if (!body) return;
+  const code = State.storeCode;
+  const leaders = leaderActiveOf(code, 'leader');
+  const subs = leaderActiveOf(code, 'sub');
+  const mine = leaderActiveOf(code).filter(r => r.gmail === myGmail());
+
+  let alert = '';
+  if (mine.length) {
+    alert = `<div class="alert alert-success">あなたは${fmtLeaderTime(mine[0].startAt)}から${leaderPositionLabel(mine[0].position)}として記録されています</div>`;
+  } else if (!leaders.length) {
+    alert = '<div class="alert alert-error">今この店舗の店責が記録されていません。店責として入る人が記録してください。</div>';
+  }
+
+  const row = r => {
+    const isMe = r.gmail === myGmail();
+    const kennin = leaderKenninOf(r).map(n => `<span class="badge badge-kennin">${escapeHtml(n)}も兼任</span>`).join('');
+    return `
+      <div class="cast-row leader-row ${isMe ? 'cast-row-self' : ''}">
+        <div class="cast-row-header">
+          <div>
+            <span class="badge badge-${r.position}">${leaderPositionLabel(r.position)}</span><span class="cast-row-name">${escapeHtml(r.castName)}</span>${isMe ? '<span class="badge badge-self">自分</span>' : ''}
+          </div>
+          ${isMe ? `<button type="button" class="btn btn-outline btn-sm" data-leader-open="del" data-id="${escapeHtml(r.id)}">取消</button>` : ''}
+        </div>
+        <div class="leader-meta"><span>${fmtLeaderTime(r.startAt)}〜 担当中</span>${kennin}</div>
+      </div>`;
+  };
+
+  const list = [...leaders, ...subs];
+  const buttons = mine.length
+    ? `<div class="leader-actions">
+        <button type="button" class="btn btn-primary" data-leader-open="handover">交代する</button>
+        <button type="button" class="btn btn-outline" data-leader-open="kennin">他の店舗も兼任</button>
+        <button type="button" class="btn btn-outline full" data-leader-open="end">担当を終える</button>
+      </div>`
+    : `<div class="leader-actions">
+        <button type="button" class="btn btn-primary" data-leader-open="join" data-position="leader">店責として入る</button>
+        <button type="button" class="btn btn-outline" data-leader-open="join" data-position="sub">副店責として入る</button>
+      </div>`;
+
+  body.innerHTML = `
+    ${alert}
+    ${list.length ? list.map(row).join('') : '<p class="text-muted text-center leader-empty">担当中の人はいません</p>'}
+    ${buttons}
+  `;
+}
+
+// ---- 入力モーダル ----
+
+function openLeaderModal(state) {
+  leaderModalState = { kennin: [], ...state };
+  if (state.type === 'enter') {
+    const code = state.storeCode;
+    leaderModalState.position = !leaderActiveOf(code, 'leader').length ? 'leader'
+      : !leaderActiveOf(code, 'sub').length ? 'sub' : 'leader';
+  }
+  renderLeaderModal();
+  document.getElementById('leaderModal').classList.remove('hidden');
+  document.body.classList.add('announcement-open');
+  document.getElementById('leaderModalBody').focus();
+}
+
+function closeLeaderModal() {
+  leaderModalState = null;
+  document.getElementById('leaderModal').classList.add('hidden');
+  document.body.classList.remove('announcement-open');
+}
+
+function leaderModalFooter(label, action, cls = 'btn-primary') {
+  return `<div class="modal-actions">
+    <button type="button" class="btn btn-outline" data-leader-act="close">やめる</button>
+    <button type="button" class="btn ${cls}" data-leader-act="${action}">${label}</button>
+  </div>`;
+}
+
+function leaderReplaceNotice(storeCode, position) {
+  const others = leaderActiveOf(storeCode, position).filter(r => r.gmail !== myGmail());
+  if (!others.length) return '';
+  const who = others.map(r => `${escapeHtml(r.castName)}さん`).join('、');
+  return `<div class="alert alert-info">${who}と交代になります。</div>`;
+}
+
+function leaderKenninChips(baseStoreCode, alreadyMine = []) {
+  const stores = (State.leaderStores || []).filter(s => s.code !== baseStoreCode);
+  if (!stores.length) return '';
+  return `<div class="form-group">
+    <label>兼任する店舗</label>
+    <div class="chip-list">
+      ${stores.map(s => {
+        const already = alreadyMine.includes(s.code);
+        const checked = already || leaderModalState.kennin.includes(s.code);
+        return `<label class="chip"><input type="checkbox" name="leaderKennin" value="${escapeHtml(s.code)}" ${checked ? 'checked' : ''} ${already ? 'disabled' : ''}><span>${escapeHtml(s.name)}</span></label>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function renderLeaderModal() {
+  const m = leaderModalState;
+  if (!m) return;
+  let html = '';
+
+  if (m.type === 'enter') {
+    const opt = (position, title) => `<label class="choice"><input type="radio" name="leaderPosition" value="${position}" ${m.position === position ? 'checked' : ''}><div><b>${title}</b></div></label>`;
+    html = `
+      <h2>${escapeHtml(leaderStoreName(m.storeCode))}に入る</h2>
+      <p class="lead">今日の役割を選んでください</p>
+      <div class="form-group"><label>役割</label><div class="choice-list">
+        ${opt('leader', '店責として入る')}${opt('sub', '副店責として入る')}${opt('none', '記録しないで入る')}
+      </div></div>
+      ${m.position !== 'none' ? leaderReplaceNotice(m.storeCode, m.position) + leaderKenninChips(m.storeCode) : ''}
+      ${leaderModalFooter('入る', 'enter')}`;
+  }
+
+  if (m.type === 'join') {
+    html = `
+      <h2>${leaderPositionLabel(m.position)}として入る</h2>
+      <p class="lead">${escapeHtml(leaderStoreName(State.storeCode))}</p>
+      ${leaderReplaceNotice(State.storeCode, m.position)}
+      ${leaderModalFooter('記録する', 'join')}`;
+  }
+
+  if (m.type === 'handover') {
+    const mine = leaderActiveOf(State.storeCode).filter(r => r.gmail === myGmail());
+    const todays = (State.choreiCasts || []).filter(c => c.gmail && c.gmail.toLowerCase() !== myGmail());
+    const todayGmails = new Set(todays.map(c => c.gmail.toLowerCase()));
+    const others = (State.castMaster || []).filter(c => c.gmail && c.gmail.toLowerCase() !== myGmail() && !todayGmails.has(c.gmail.toLowerCase()));
+    const option = c => `<option value="${escapeHtml(c.gmail)}">${escapeHtml(c.castName)}</option>`;
+    html = `
+      <h2>交代する</h2>
+      <p class="lead">あなたの担当を終了し、次の人の担当を記録します。</p>
+      ${mine.length > 1 ? `<div class="form-group"><label for="leaderHandoverRow">交代する役割</label>
+        <select id="leaderHandoverRow" class="form-control">${mine.map(r => `<option value="${escapeHtml(r.id)}">${leaderPositionLabel(r.position)}</option>`).join('')}</select></div>`
+        : `<input type="hidden" id="leaderHandoverRow" value="${escapeHtml(mine[0]?.id || '')}">`}
+      <div class="form-group"><label for="leaderHandoverTo">次の担当</label>
+        <select id="leaderHandoverTo" class="form-control">
+          ${todays.length ? `<optgroup label="今日の出勤キャスト">${todays.map(option).join('')}</optgroup>` : ''}
+          <optgroup label="${todays.length ? 'そのほか' : 'キャスト'}">${others.map(option).join('')}</optgroup>
+        </select></div>
+      ${leaderModalFooter('交代を記録', 'handover')}`;
+  }
+
+  if (m.type === 'end') {
+    const mine = (State.storeLeaders || []).filter(r => r.gmail === myGmail() && !r.endAt);
+    html = `
+      <h2>担当を終える</h2>
+      <p class="lead">退勤や中抜けのときに使います。</p>
+      <div class="form-group"><label>終える担当</label><div class="choice-list">
+        ${mine.map(r => `<label class="choice"><input type="checkbox" name="leaderEndRow" value="${escapeHtml(r.id)}" ${r.storeCode === State.storeCode ? 'checked' : ''}><div><b>${escapeHtml(leaderStoreName(r.storeCode))}の${leaderPositionLabel(r.position)}</b></div></label>`).join('')}
+      </div></div>
+      ${leaderModalFooter('終了を記録', 'end', 'btn-danger')}`;
+  }
+
+  if (m.type === 'kennin') {
+    const current = leaderActiveOf(State.storeCode).find(r => r.gmail === myGmail());
+    const alreadyMine = (State.storeLeaders || []).filter(r => r.gmail === myGmail() && !r.endAt && r.position === current?.position).map(r => r.storeCode);
+    m.position = current?.position || 'leader';
+    html = `
+      <h2>他の店舗も兼任する</h2>
+      <p class="lead">選んだ店舗にも${leaderPositionLabel(m.position)}として記録します。</p>
+      ${leaderKenninChips(State.storeCode, alreadyMine)}
+      ${leaderModalFooter('兼任を記録', 'kennin')}`;
+  }
+
+  if (m.type === 'del') {
+    const r = (State.storeLeaders || []).find(x => x.id === m.id);
+    html = `
+      <h2>この記録を取り消しますか？</h2>
+      ${r ? `<div class="alert alert-info">${escapeHtml(leaderStoreName(r.storeCode))}　${leaderPositionLabel(r.position)}：${escapeHtml(r.castName)}　${fmtLeaderTime(r.startAt)}〜</div>` : ''}
+      <p class="lead">間違えて記録したときに使います。交代や退勤は「交代する」「担当を終える」を使ってください。</p>
+      ${leaderModalFooter('取り消す', 'del', 'btn-danger')}`;
+  }
+
+  document.getElementById('leaderModalBody').innerHTML = html;
+}
+
+function leaderCheckedValues(name) {
+  return [...document.querySelectorAll(`#leaderModal input[name="${name}"]:checked:not(:disabled)`)].map(i => i.value);
+}
+
+async function submitLeaderModal(action, button) {
+  const m = leaderModalState;
+  if (!m) return;
+  button.disabled = true;
+  let result = { success: true };
+  let message = '';
+  let goToStore = null;
+
+  try {
+    if (action === 'enter') {
+      if (m.position !== 'none') {
+        const kennin = leaderCheckedValues('leaderKennin');
+        result = await api('/api/store-leaders/enter', {
+          method: 'POST',
+          body: JSON.stringify({ storeCode: m.storeCode, kenninStoreCodes: kennin, position: m.position }),
+        });
+        message = `${leaderPositionLabel(m.position)}として記録しました${kennin.length ? `（${kennin.length + 1}店兼任）` : ''}`;
+      }
+      goToStore = m.storeCode;
+    } else if (action === 'join') {
+      result = await api('/api/store-leaders/enter', {
+        method: 'POST',
+        body: JSON.stringify({ storeCode: State.storeCode, position: m.position }),
+      });
+      message = `${leaderPositionLabel(m.position)}として記録しました`;
+    } else if (action === 'handover') {
+      result = await api('/api/store-leaders/handover', {
+        method: 'POST',
+        body: JSON.stringify({ id: document.getElementById('leaderHandoverRow').value, toGmail: document.getElementById('leaderHandoverTo').value }),
+      });
+      message = `${result.castName || '次の担当'}さんへ交代しました`;
+    } else if (action === 'end') {
+      const ids = leaderCheckedValues('leaderEndRow');
+      if (!ids.length) { button.disabled = false; return; }
+      result = await api('/api/store-leaders/end', { method: 'POST', body: JSON.stringify({ ids }) });
+      message = '担当を終了しました';
+    } else if (action === 'kennin') {
+      const kennin = leaderCheckedValues('leaderKennin');
+      if (!kennin.length) { button.disabled = false; return; }
+      result = await api('/api/store-leaders/enter', {
+        method: 'POST',
+        body: JSON.stringify({ storeCode: kennin[0], kenninStoreCodes: kennin.slice(1), position: m.position }),
+      });
+      message = `${kennin.map(leaderStoreName).join('・')}の兼任を記録しました`;
+    } else if (action === 'del') {
+      result = await api('/api/store-leaders/delete', { method: 'POST', body: JSON.stringify({ id: m.id }) });
+      message = '記録を取り消しました';
+    }
+  } catch (e) {
+    result = { success: false, error: '通信エラーが発生しました' };
+  }
+
+  if (!result.success) {
+    button.disabled = false;
+    showToast('error', result.error || '記録できませんでした');
+    return;
+  }
+
+  closeLeaderModal();
+  if (message) showToast('success', message);
+
+  if (goToStore) {
+    State.storeCode = goToStore;
+    State.storeName = leaderStoreName(goToStore);
+    await showManagerScreen();
+  } else {
+    await loadStoreLeaders();
+    renderLeaderCard();
+  }
+}
+
+function setupLeaderEvents() {
+  const modal = document.getElementById('leaderModal');
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) { closeLeaderModal(); return; }
+    const btn = e.target.closest('[data-leader-act]');
+    if (!btn) return;
+    if (btn.dataset.leaderAct === 'close') closeLeaderModal();
+    else submitLeaderModal(btn.dataset.leaderAct, btn);
+  });
+  modal.addEventListener('change', (e) => {
+    if (!leaderModalState) return;
+    if (e.target.name === 'leaderPosition') {
+      leaderModalState.position = e.target.value;
+      leaderModalState.kennin = [];
+      renderLeaderModal();
+    } else if (e.target.name === 'leaderKennin') {
+      leaderModalState.kennin = leaderCheckedValues('leaderKennin');
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && leaderModalState) closeLeaderModal();
+  });
+  document.getElementById('leaderCardBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-leader-open]');
+    if (!btn) return;
+    openLeaderModal({ type: btn.dataset.leaderOpen, position: btn.dataset.position, id: btn.dataset.id });
+  });
+}
+
+// ---- 本部ダッシュボード「店責」タブ ----
+
+async function renderDashStoreLeadersTab() {
+  const storeCode = State.dashStoreCode || 'all';
+  const month = (State.dashBaseDate || State.businessDate || '').slice(0, 7);
+  const metrics = document.getElementById('dashStoreLeadersMetrics');
+  const nowList = document.getElementById('dashStoreLeadersNow');
+  const summaryEl = document.getElementById('dashStoreLeadersSummary');
+  nowList.innerHTML = '<p class="text-muted text-sm">読み込み中...</p>';
+
+  const params = new URLSearchParams({ month, storeCode });
+  const [current, summary] = await Promise.all([
+    api('/api/store-leaders'),
+    api(`/api/store-leaders/summary?${params}`),
+  ]);
+  State.storeLeaders = current.success ? (current.leaders || []) : [];
+  if (!current.success) showToast('error', current.error || '店責の記録を取得できませんでした');
+
+  const stores = (State.dashStores || []).filter(s => storeCode === 'all' || s.code === storeCode);
+  const storeCodes = new Set(stores.map(s => s.code));
+  const inScope = State.storeLeaders.filter(r => storeCodes.has(r.storeCode));
+  const recorded = stores.filter(s => leaderActiveOf(s.code, 'leader').length).length;
+  const activePeople = new Map();
+  State.storeLeaders.filter(r => !r.endAt).forEach(r => {
+    if (!activePeople.has(r.gmail)) activePeople.set(r.gmail, { name: r.castName, stores: new Set(), inScope: false });
+    const p = activePeople.get(r.gmail);
+    p.stores.add(r.storeCode);
+    if (storeCodes.has(r.storeCode)) p.inScope = true;
+  });
+  const kenninPeople = [...activePeople.values()].filter(p => p.inScope && p.stores.size > 1);
+  const changes = inScope.filter(r => r.endAt).length;
+
+  metrics.innerHTML = `
+    <div class="dash-metric">
+      <div class="dash-metric-label">店責記録済み</div>
+      <div class="dash-metric-value ${recorded < stores.length ? 'is-warning' : 'is-good'}">${recorded} / ${stores.length}店</div>
+      <div class="dash-metric-sub">営業日 ${escapeHtml(current.date || State.businessDate || '')}</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">兼任中</div>
+      <div class="dash-metric-value">${kenninPeople.length}人</div>
+      <div class="dash-metric-sub">${kenninPeople.map(p => escapeHtml(p.name)).join('、') || '—'}</div>
+    </div>
+    <div class="dash-metric">
+      <div class="dash-metric-label">今日の交代</div>
+      <div class="dash-metric-value">${changes}回</div>
+      <div class="dash-metric-sub">交代・終了の合計</div>
+    </div>`;
+
+  const names = rows => rows.map(r => {
+    const k = leaderKenninOf(r).length;
+    return `${escapeHtml(r.castName)}${k ? ` <span class="badge badge-kennin">${k + 1}店兼任</span>` : ''}`;
+  }).join('、');
+  nowList.innerHTML = stores.map(s => {
+    const leaders = leaderActiveOf(s.code, 'leader');
+    const subs = leaderActiveOf(s.code, 'sub');
+    const ch = inScope.filter(r => r.storeCode === s.code && r.endAt).length;
+    return `<div class="dash-store-progress-row">
+      <div class="dash-store-progress-main">
+        <span class="dash-store-progress-name">${escapeHtml(s.name)}</span>
+        ${leaders.length ? '' : '<span class="badge badge-leader-none">店責 未記録</span>'}
+      </div>
+      <div class="dash-store-progress-values"><span>店責：${names(leaders) || '—'}</span><span>副店責：${names(subs) || '—'}</span></div>
+      <div class="dash-store-progress-date">${ch ? `今日の交代 ${ch}回` : '今日の交代なし'}</div>
+    </div>`;
+  }).join('') || '<p class="text-muted text-sm">店舗がありません</p>';
+
+  document.getElementById('dashStoreLeadersSummaryTitle').textContent = `${Number(month.slice(5, 7))}月の集計`;
+  if (!summary.success) {
+    summaryEl.innerHTML = `<p class="text-muted text-sm">${escapeHtml(summary.error || '集計を取得できませんでした')}</p>`;
+    return;
+  }
+  summaryEl.innerHTML = summary.summary.length ? `
+    <div class="table-wrapper"><table class="table">
+      <thead><tr><th>名前</th><th>店責</th><th>副店責</th><th>兼任した日</th><th>最大兼任</th><th>担当時間</th></tr></thead>
+      <tbody>${summary.summary.map(p => `<tr>
+        <td><b>${escapeHtml(p.castName)}</b></td><td>${p.leaderDays}日</td><td>${p.subDays}日</td>
+        <td>${p.kenninDays}日</td><td>${p.maxStores}店</td><td>${p.hours}時間</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : '<p class="text-muted text-sm">この月の記録はまだありません</p>';
 }

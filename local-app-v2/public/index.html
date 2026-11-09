@@ -48,7 +48,7 @@
           <div class="card-title">どちらの画面に入る？</div>
           <div class="store-list">
             <div class="store-item" id="roleSelectManager">
-              <span class="store-item-name">店責として入る</span>
+              <span class="store-item-name">店責・副店責として入る</span>
               <span class="store-item-arrow">&rarr;</span>
             </div>
             <div class="store-item" id="roleSelectCast">
@@ -105,6 +105,12 @@
 
         <!-- 朝礼タブ -->
         <div id="choreiTab" class="tab-content active">
+          <!-- 本日の店責・副店責 -->
+          <div class="card" id="leaderCard">
+            <div class="card-title">本日の店責・副店責</div>
+            <div id="leaderCardBody"><p class="text-muted text-sm">読み込み中...</p></div>
+          </div>
+
           <div class="card">
             <div class="card-title">出勤キャスト</div>
             <div id="choreiAlert" class="alert hidden"></div>
@@ -508,6 +514,7 @@
           <div class="tab active" data-tab="dashSales">売上</div>
           <div class="tab" data-tab="dashIssues">伝言板</div>
           <div class="tab" data-tab="dashManagerFeedback">店責FB</div>
+          <div class="tab" data-tab="dashStoreLeaders">店責</div>
         </div>
 
         <!-- 売上タブ -->
@@ -532,6 +539,19 @@
           </div>
         </div>
 
+        <!-- 店責・副店責タブ -->
+        <div id="dashStoreLeadersTab" class="tab-content">
+          <div id="dashStoreLeadersMetrics" class="dash-metrics"></div>
+          <div class="card leader-now-card">
+            <div class="card-title">いまの店責・副店責</div>
+            <div id="dashStoreLeadersNow" class="dash-store-progress-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-title" id="dashStoreLeadersSummaryTitle">今月の集計</div>
+            <div id="dashStoreLeadersSummary"></div>
+          </div>
+        </div>
+
         <!-- 店責フィードバックタブ -->
         <div id="dashManagerFeedbackTab" class="tab-content">
           <div id="dashManagerFeedbackMetrics" class="dash-metrics"></div>
@@ -541,6 +561,11 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- ========== 店責・副店責の入力 ========== -->
+    <div id="leaderModal" class="announcement-overlay hidden" role="dialog" aria-modal="true">
+      <div id="leaderModalBody" class="announcement-modal leader-modal" tabindex="-1"></div>
     </div>
 
     <!-- ========== 期間限定のお知らせ ========== -->
