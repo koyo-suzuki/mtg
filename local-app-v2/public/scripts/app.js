@@ -111,7 +111,60 @@ function loadSession() {
 window.addEventListener('beforeunload', () => flushAllAutoSaves());
 window.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') flushAllAutoSaves();
+  if (document.visibilityState === 'visible') checkAppVersion();
 });
+
+// =====================================================
+// 新しい版が公開されたら自動で読み込み直す
+// 画面に戻ってきたとき・5分ごとに版を確認し、入力途中や保存中でなければ再読み込みする。
+// ログイン状態と開いていた画面は sessionStorage から復元される。
+// =====================================================
+
+const LOADED_APP_VERSION = document.querySelector('meta[name="app-version"]')?.content || '';
+const APP_VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+let appVersionLastCheckedAt = 0;
+let appReloadScheduled = false;
+
+function hasUnsavedWork() {
+  if (Object.values(autoSaveLocks).some(lock => lock.inFlight || lock.pending)) return true;
+  const statusBusy = [...document.querySelectorAll('.autosave-status')].some(el =>
+    !el.classList.contains('hidden') && /autosave-(pending|saving|error)/.test(el.className));
+  if (statusBusy) return true;
+  const active = document.activeElement;
+  if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return true;
+  if (leaderModalState) return true;
+  const announcement = document.getElementById('awardAnnouncementModal');
+  return Boolean(announcement && !announcement.classList.contains('hidden'));
+}
+
+function reloadWhenIdle(attempt = 0) {
+  if (!hasUnsavedWork()) {
+    window.location.reload();
+    return;
+  }
+  // 入力中・保存中なら少し待って確認し直す（最大10分）
+  if (attempt < 120) setTimeout(() => reloadWhenIdle(attempt + 1), 5000);
+  else appReloadScheduled = false;
+}
+
+async function checkAppVersion(force = false) {
+  if (!LOADED_APP_VERSION || LOADED_APP_VERSION.includes('__') || appReloadScheduled) return;
+  if (!force && Date.now() - appVersionLastCheckedAt < 30 * 1000) return;
+  appVersionLastCheckedAt = Date.now();
+  try {
+    const res = await fetch('/api/app-version', { cache: 'no-store' });
+    const data = await res.json();
+    if (data.success && data.version && data.version !== LOADED_APP_VERSION) {
+      appReloadScheduled = true;
+      flushAllAutoSaves();
+      reloadWhenIdle();
+    }
+  } catch (e) { /* 通信できないときは次の確認で */ }
+}
+
+setInterval(() => {
+  if (document.visibilityState === 'visible') checkAppVersion(true);
+}, APP_VERSION_CHECK_INTERVAL_MS);
 
 document.addEventListener('DOMContentLoaded', async () => {
   setupEvents();

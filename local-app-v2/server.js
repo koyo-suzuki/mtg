@@ -3,6 +3,7 @@ try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const { verifyGoogleToken } = require('./src/auth/middleware');
 const { authMiddleware } = require('./src/auth/middleware');
 const configReader = require('./src/sheets/config-reader');
@@ -26,7 +27,34 @@ const DEV_LOGIN_ROLES = [
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: false, limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// =====================================================
+// 画面の版（更新したら自動で新しい画面に切り替えるため）
+// =====================================================
+
+const APP_VERSION = String(
+  process.env.VERCEL_GIT_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || Date.now()
+).slice(0, 12);
+const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
+let indexHtmlCache = null;
+
+function renderIndexHtml() {
+  if (!indexHtmlCache) {
+    indexHtmlCache = fs.readFileSync(INDEX_HTML_PATH, 'utf8').replace(/__APP_VERSION__/g, APP_VERSION);
+  }
+  return indexHtmlCache;
+}
+
+app.get(['/', '/index.html'], (req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.type('html').send(renderIndexHtml());
+});
+
+app.get('/api/app-version', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, version: APP_VERSION });
+});
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // =====================================================
 // 営業日（AM 11:00 区切り）
