@@ -5,14 +5,15 @@ const sheetsClientPath = require.resolve('../src/sheets/sheets-client');
 const storeLeadersPath = require.resolve('../src/sheets/store-leaders');
 const DATE = '2026-11-09';
 
-function loadModule({ sheetExists = true } = {}) {
+function loadModule({ sheetExists = true, header = [] } = {}) {
   const rows = [];
   const calls = [];
   let exists = sheetExists;
   const fakeClient = {
     async getRows(_id, range) {
       calls.push({ type: 'get', range });
-      assert.equal(range, 'store_leaders!A2:L');
+      assert.ok(['store_leaders!A2:N', 'store_leaders!A1:N1'].includes(range), range);
+      if (range === 'store_leaders!A1:N1') return [header];
       return rows.map(row => [...row]);
     },
     async appendRows(_id, range, values) {
@@ -21,7 +22,7 @@ function loadModule({ sheetExists = true } = {}) {
     },
     async updateRange(_id, range, values) {
       calls.push({ type: 'update', range, values });
-      const match = range.match(/^store_leaders!A(\d+):L(\d+)$/);
+      const match = range.match(/^store_leaders!A(\d+):N(\d+)$/);
       assert.ok(match, `unexpected range ${range}`);
       const sheetRow = Number(match[1]);
       if (sheetRow === 1) return; // header
@@ -113,7 +114,7 @@ test('creates the sheet with a header when it does not exist', async () => {
   const { mod, calls } = loadModule({ sheetExists: false });
   await mod.enterStoreLeader({ date: DATE, storeCodes: ['AKB1'], position: 'leader', gmail: 'a@example.com', castName: 'a', editorEmail: 'a@example.com' });
   assert.ok(calls.some(c => c.type === 'batch' && c.requests[0].addSheet.properties.title === 'store_leaders'));
-  const header = calls.find(c => c.type === 'update' && c.range === 'store_leaders!A1:L1');
+  const header = calls.find(c => c.type === 'update' && c.range === 'store_leaders!A1:N1');
   assert.deepEqual(header.values[0], mod.HEADER);
 });
 
@@ -152,4 +153,34 @@ test('summary filtered by store keeps kennin info but only that store time', () 
   assert.equal(summary[0].hours, 1);
   assert.equal(summary[0].kenninDays, 1);
   assert.deepEqual(mod.summarize([{ ...base, id: '3', storeCode: 'SJK', startAt: '', endAt: '' }], { month: '2026-11', storeCode: 'IKB' }), []);
+});
+
+test('existing sheet with the old 12-column header gets the new columns added', async () => {
+  const oldHeader = ['id', 'businessDate', 'storeCode', 'position', 'gmail', 'castName', 'startAt', 'endAt', 'createdBy', 'createdAt', 'updatedAt', 'deletedAt'];
+  const { mod, calls } = loadModule({ header: oldHeader });
+  await mod.enterStoreLeader({ date: DATE, storeCodes: ['AKB1'], position: 'leader', gmail: 'a@example.com', castName: 'a', editorEmail: 'a@example.com' });
+  const header = calls.find(c => c.type === 'update' && c.range === 'store_leaders!A1:N1');
+  assert.deepEqual(header.values[0], mod.HEADER);
+  assert.deepEqual(mod.HEADER.slice(12), ['updatedBy', 'note']);
+});
+
+test('history returns month records and summary, limited to one person when asked', async () => {
+  const { mod } = loadModule();
+  await mod.enterStoreLeader({ date: DATE, storeCodes: ['AKB1', 'IKB'], position: 'leader', gmail: 'riri@example.com', castName: 'りり', editorEmail: 'riri@example.com' });
+  await mod.enterStoreLeader({ date: DATE, storeCodes: ['SJK'], position: 'sub', gmail: 'yuna@example.com', castName: 'ゆな', editorEmail: 'yuna@example.com' });
+  await mod.enterStoreLeader({ date: '2026-10-31', storeCodes: ['SJK'], position: 'leader', gmail: 'yuna@example.com', castName: 'ゆな', editorEmail: 'yuna@example.com' });
+
+  const all = await mod.getStoreLeaderHistory({ month: '2026-11', today: '2026-11-10' });
+  assert.equal(all.records.length, 3);
+  const riri = all.summary.find(p => p.castName === 'りり');
+  assert.equal(riri.storeDays, 2);
+  assert.equal(riri.kenninDays, 1);
+  assert.equal(riri.unfinished, 2, 'past business date without end is flagged');
+
+  const own = await mod.getStoreLeaderHistory({ month: '2026-11', gmail: 'YUNA@example.com', today: '2026-11-10' });
+  assert.deepEqual(own.records.map(r => r.castName), ['ゆな']);
+  assert.deepEqual(own.summary.map(p => p.castName), ['ゆな']);
+
+  const store = await mod.getStoreLeaderHistory({ month: '2026-11', storeCode: 'IKB', today: '2026-11-10' });
+  assert.deepEqual(store.records.map(r => r.storeCode), ['IKB']);
 });

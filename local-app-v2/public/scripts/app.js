@@ -85,6 +85,9 @@ function saveSession(screen) {
     dashBaseDate: State.dashBaseDate,
     dashDateFrom: State.dashDateFrom,
     dashDateTo: State.dashDateTo,
+    leaderHistoryFrom: State.leaderHistoryFrom,
+    leaderHistoryMonth: State.leaderHistoryMonth,
+    leaderHistoryStore: State.leaderHistoryStore,
   };
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
 }
@@ -111,7 +114,60 @@ function loadSession() {
 window.addEventListener('beforeunload', () => flushAllAutoSaves());
 window.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') flushAllAutoSaves();
+  if (document.visibilityState === 'visible') checkAppVersion();
 });
+
+// =====================================================
+// 新しい版が公開されたら自動で読み込み直す
+// 画面に戻ってきたとき・5分ごとに版を確認し、入力途中や保存中でなければ再読み込みする。
+// ログイン状態と開いていた画面は sessionStorage から復元される。
+// =====================================================
+
+const LOADED_APP_VERSION = document.querySelector('meta[name="app-version"]')?.content || '';
+const APP_VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+let appVersionLastCheckedAt = 0;
+let appReloadScheduled = false;
+
+function hasUnsavedWork() {
+  if (Object.values(autoSaveLocks).some(lock => lock.inFlight || lock.pending)) return true;
+  const statusBusy = [...document.querySelectorAll('.autosave-status')].some(el =>
+    !el.classList.contains('hidden') && /autosave-(pending|saving|error)/.test(el.className));
+  if (statusBusy) return true;
+  const active = document.activeElement;
+  if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return true;
+  if (leaderModalState) return true;
+  const announcement = document.getElementById('awardAnnouncementModal');
+  return Boolean(announcement && !announcement.classList.contains('hidden'));
+}
+
+function reloadWhenIdle(attempt = 0) {
+  if (!hasUnsavedWork()) {
+    window.location.reload();
+    return;
+  }
+  // 入力中・保存中なら少し待って確認し直す（最大10分）
+  if (attempt < 120) setTimeout(() => reloadWhenIdle(attempt + 1), 5000);
+  else appReloadScheduled = false;
+}
+
+async function checkAppVersion(force = false) {
+  if (!LOADED_APP_VERSION || LOADED_APP_VERSION.includes('__') || appReloadScheduled) return;
+  if (!force && Date.now() - appVersionLastCheckedAt < 30 * 1000) return;
+  appVersionLastCheckedAt = Date.now();
+  try {
+    const res = await fetch('/api/app-version', { cache: 'no-store' });
+    const data = await res.json();
+    if (data.success && data.version && data.version !== LOADED_APP_VERSION) {
+      appReloadScheduled = true;
+      flushAllAutoSaves();
+      reloadWhenIdle();
+    }
+  } catch (e) { /* 通信できないときは次の確認で */ }
+}
+
+setInterval(() => {
+  if (document.visibilityState === 'visible') checkAppVersion(true);
+}, APP_VERSION_CHECK_INTERVAL_MS);
 
 document.addEventListener('DOMContentLoaded', async () => {
   setupEvents();
@@ -135,6 +191,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     State.dashBaseDate = session.dashBaseDate || null;
     State.dashDateFrom = session.dashDateFrom || null;
     State.dashDateTo = session.dashDateTo || null;
+    State.leaderHistoryFrom = session.leaderHistoryFrom || null;
+    State.leaderHistoryMonth = session.leaderHistoryMonth || null;
+    State.leaderHistoryStore = session.leaderHistoryStore || null;
 
     // 営業日を最新に更新
     try {
@@ -177,6 +236,9 @@ async function restoreScreen(screen) {
       break;
     case 'roleSelect':
       await showRoleSelectScreen();
+      break;
+    case 'leaderHistory':
+      await showLeaderHistoryScreen();
       break;
     default:
       clearSession();
@@ -379,6 +441,7 @@ function setupEvents() {
 
   // 店責・副店責の記録
   setupLeaderEvents();
+  setupLeaderHistoryEvents();
 
   document.getElementById('castStoreBack').addEventListener('click', () => {
     if (shouldUseRoleSelect(State.role)) {
@@ -566,6 +629,7 @@ async function showRoleSelectScreen() {
   document.getElementById('roleSelectGreeting').textContent = `${State.displayName} さん`;
   document.querySelector('#roleSelectManager .store-item-name').textContent =
     State.role === 'manager' ? '管理画面に入る' : '店責・副店責として入る';
+  document.getElementById('roleSelectLeaderHistory').classList.toggle('hidden', State.role !== 'cast_manager');
   document.getElementById('managerMonthlyProgress').innerHTML = '<div class="dash-progress-loading">読み込み中...</div>';
   await loadTopMonthlyProgress('managerMonthlyProgress');
   saveSession('roleSelect');
@@ -3425,4 +3489,263 @@ async function renderDashStoreLeadersTab() {
         <td>${p.kenninDays}日</td><td>${p.maxStores}店</td><td>${p.hours}時間</td>
       </tr>`).join('')}</tbody>
     </table></div>` : '<p class="text-muted text-sm">この月の記録はまだありません</p>';
+}
+
+// =====================================================
+// 店責の記録ページ（いつ・誰が・どこの店責をしたか）
+// 本部は全員分を見て修正できる。店責本人は自分の記録だけ見られる。
+// =====================================================
+
+const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
+let leaderHistoryData = null;
+
+function lhMonthOf(date) {
+  return String(date || State.businessDate || new Date().toISOString()).slice(0, 7);
+}
+
+function lhShiftMonth(month, diff) {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + diff, 1));
+  return d.toISOString().slice(0, 7);
+}
+
+function lhDateLabel(date) {
+  const d = new Date(`${date}T00:00:00Z`);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEKDAYS_JA[d.getUTCDay()]})`;
+}
+
+async function showLeaderHistoryScreen(from) {
+  if (from) State.leaderHistoryFrom = from;
+  hideAllScreens();
+  document.getElementById('leaderHistoryScreen').classList.remove('hidden');
+  if (!State.leaderHistoryMonth) State.leaderHistoryMonth = lhMonthOf(State.businessDate);
+  document.getElementById('lhMonth').value = State.leaderHistoryMonth;
+  await ensureLeaderStores();
+  const storeSelect = document.getElementById('lhStore');
+  storeSelect.innerHTML = '<option value="all">全店舗</option>' +
+    (State.leaderStores || []).map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.name)}</option>`).join('');
+  storeSelect.value = State.leaderHistoryStore || 'all';
+  saveSession('leaderHistory');
+  await loadLeaderHistory();
+}
+
+async function loadLeaderHistory() {
+  const month = State.leaderHistoryMonth;
+  const storeCode = State.leaderHistoryStore || 'all';
+  document.getElementById('lhView').innerHTML = '<p class="text-muted text-sm">読み込み中...</p>';
+  const result = await api(`/api/store-leaders/history?${new URLSearchParams({ month, storeCode })}`);
+  if (!result.success) {
+    document.getElementById('lhView').innerHTML = `<p class="text-muted text-sm">${escapeHtml(result.error || '記録を取得できませんでした')}</p>`;
+    return;
+  }
+  leaderHistoryData = result;
+  renderLeaderHistory();
+}
+
+// その月の日付（今日より先は出さない）
+function lhMonthDates(month, today) {
+  const [y, m] = month.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const dates = [];
+  for (let d = 1; d <= last; d++) {
+    const date = `${month}-${String(d).padStart(2, '0')}`;
+    if (date <= today) dates.push(date);
+  }
+  return dates;
+}
+
+function renderLeaderHistory() {
+  const data = leaderHistoryData;
+  if (!data) return;
+  const isAdmin = data.scope === 'all';
+  const today = data.today;
+  const view = isAdmin ? (State.leaderHistoryView || 'store') : 'person';
+  const person = isAdmin ? (State.leaderHistoryPerson || '') : (data.summary[0]?.gmail || '');
+
+  // 上部の切り替え・ボタン
+  document.getElementById('lhViewToggle').classList.toggle('hidden', !isAdmin);
+  document.querySelectorAll('#lhViewToggle [data-lh-view]').forEach(b => b.classList.toggle('active', b.dataset.lhView === view));
+  const personSelect = document.getElementById('lhPerson');
+  personSelect.classList.toggle('hidden', !isAdmin || view !== 'person');
+  if (isAdmin) {
+    personSelect.innerHTML = '<option value="">全員</option>' + data.summary
+      .slice().sort((a, b) => a.castName.localeCompare(b.castName, 'ja'))
+      .map(p => `<option value="${escapeHtml(p.gmail)}">${escapeHtml(p.castName)}</option>`).join('');
+    personSelect.value = person;
+  }
+  document.getElementById('lhCsv').classList.toggle('hidden', !data.records.length);
+  document.getElementById('lhScopeNote').textContent = isAdmin
+    ? '記録の間違いは、スプレッドシートの store_leaders シートで直してください'
+    : 'あなたの記録です。間違いは本部に連絡してください';
+
+  let html = '';
+  let missingTotal = 0;
+  const dayNum = date => String(Number(date.slice(8, 10)));
+
+  // 兼任：同じ人が同じ日に、時間の重なる別店舗の記録を持つ
+  const endOf = r => r.endAt ? Date.parse(r.endAt) : Infinity;
+  const isKennin = r => data.records.some(o => o.id !== r.id && o.gmail === r.gmail && o.businessDate === r.businessDate
+    && o.storeCode !== r.storeCode && Date.parse(o.startAt) < endOf(r) && Date.parse(r.startAt) < endOf(o));
+  // 途中交代：その店舗・その日・その役割の記録が2件以上ある
+  const isHandover = r => data.records.filter(o => o.storeCode === r.storeCode && o.businessDate === r.businessDate
+    && o.position === r.position).length > 1;
+  let usedKennin = false;
+  let usedHandover = false;
+
+  // 担当した日付を並べ、最後に合計の日数を付ける。兼任・途中交代の日は印を付ける
+  const dateChips = rs => {
+    const byDate = new Map();
+    rs.forEach(r => { if (!byDate.has(r.businessDate)) byDate.set(r.businessDate, []); byDate.get(r.businessDate).push(r); });
+    const dates = [...byDate.keys()].sort();
+    if (!dates.length) return '<span class="lh-muted">—</span>';
+    const chips = dates.map(date => {
+      const day = byDate.get(date);
+      const kennin = day.some(isKennin);
+      const handover = day.some(isHandover);
+      if (kennin) usedKennin = true;
+      if (handover) usedHandover = true;
+      const marks = `${kennin ? '<span class="lh-mark is-kennin">兼</span>' : ''}${handover ? '<span class="lh-mark is-handover">交</span>' : ''}`;
+      return `<span class="lh-day-chip" title="${lhDateLabel(date)}">${dayNum(date)}${marks}</span>`;
+    }).join('');
+    return `<span class="lh-chips">${chips}<span class="lh-days-count">${dates.length}日</span></span>`;
+  };
+  const legend = () => (usedKennin || usedHandover)
+    ? `<p class="lh-legend">${usedKennin ? '<span class="lh-mark is-kennin">兼</span>同じ日にほかの店舗も担当　' : ''}${usedHandover ? '<span class="lh-mark is-handover">交</span>その日の途中で交代' : ''}</p>` : '';
+
+  if (view === 'store') {
+    // ---- 店舗別：店舗ごとに、誰が何日に店責・副店責をしたか ----
+    const storeCode = State.leaderHistoryStore || 'all';
+    const stores = (State.leaderStores || []).filter(s => storeCode === 'all' || s.code === storeCode);
+    // 記録が始まった日より前は「記録なし」にしない
+    const firstDate = data.records.reduce((m, r) => (!m || r.businessDate < m ? r.businessDate : m), '');
+    const pastDates = firstDate ? lhMonthDates(data.month, today).filter(d => d < today && d >= firstDate) : [];
+    html = stores.map(s => {
+      usedKennin = false;
+      usedHandover = false;
+      const rs = data.records.filter(r => r.storeCode === s.code);
+      const leaderDates = new Set(rs.filter(r => r.position === 'leader').map(r => r.businessDate));
+      const missing = pastDates.filter(d => !leaderDates.has(d));
+      missingTotal += missing.length;
+      const people = new Map();
+      rs.forEach(r => {
+        if (!people.has(r.gmail)) people.set(r.gmail, { name: r.castName, rows: [] });
+        people.get(r.gmail).rows.push(r);
+      });
+      const peopleRows = [...people.values()]
+        .map(p => ({ ...p, leaderCount: new Set(p.rows.filter(r => r.position === 'leader').map(r => r.businessDate)).size }))
+        .sort((a, b) => b.leaderCount - a.leaderCount)
+        .map(p => `<tr><td class="lh-person-name">${escapeHtml(p.name)}</td>
+          <td>${dateChips(p.rows.filter(r => r.position === 'leader'))}</td>
+          <td>${dateChips(p.rows.filter(r => r.position === 'sub'))}</td></tr>`).join('');
+      const missingRow = missing.length ? `<tr class="lh-missing-row"><td class="lh-person-name">記録なし</td><td colspan="2"><span class="lh-chips">${missing
+        .map(d => `<span class="lh-day-chip is-missing" title="${lhDateLabel(d)}">${dayNum(d)}</span>`).join('')}<span class="lh-days-count">${missing.length}日</span></span></td></tr>` : '';
+      return `<details class="lh-store card" ${stores.length === 1 ? 'open' : ''}>
+        <summary class="lh-store-head">
+          <span class="lh-store-title">${escapeHtml(s.name)}</span>
+          ${missing.length ? `<span class="lh-warn">記録なし ${missing.length}日</span>` : ''}
+        </summary>
+        ${peopleRows || missingRow ? `<div class="table-wrapper"><table class="table lh-table lh-dates-table">
+          <thead><tr><th>名前</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
+          <tbody>${peopleRows}${missingRow}</tbody></table></div>${legend()}` : '<p class="text-muted text-sm lh-empty">この月の記録はまだありません</p>'}
+      </details>`;
+    }).join('') || '<p class="text-muted text-center lh-empty">この月の日付がまだありません</p>';
+  } else {
+    // ---- 人別：一人ずつ、どの店舗で何日に店責・副店責をしたか ----
+    const list = data.summary.filter(p => !person || p.gmail === person);
+    html = list.map(p => {
+      usedKennin = false;
+      usedHandover = false;
+      const rs = data.records.filter(r => r.gmail === p.gmail);
+      const storeRows = (State.leaderStores || []).filter(s => rs.some(r => r.storeCode === s.code)).map(s => {
+        const inStore = rs.filter(r => r.storeCode === s.code);
+        const lead = inStore.filter(r => r.position === 'leader');
+        const sub = inStore.filter(r => r.position === 'sub');
+        return `<tr><td class="lh-person-name">${escapeHtml(s.name)}</td><td>${dateChips(lead)}</td><td>${dateChips(sub)}</td></tr>`;
+      }).join('');
+      return `<details class="lh-store card lh-person-card" ${list.length === 1 ? 'open' : ''}>
+        <summary class="lh-store-head"><span class="lh-store-title">${escapeHtml(p.castName)}</span>
+          <span class="lh-store-meta">店責 ${p.leaderDays}日・副店責 ${p.subDays}日${p.kenninDays ? `・兼任 ${p.kenninDays}日` : ''}</span></summary>
+        <div class="table-wrapper"><table class="table lh-table lh-dates-table">
+          <thead><tr><th>店舗</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
+          <tbody>${storeRows}</tbody></table></div>${legend()}
+      </details>`;
+    }).join('') || '<p class="text-muted text-center lh-empty">この月の記録はまだありません</p>';
+  }
+
+  document.getElementById('lhView').innerHTML = html;
+
+  // 店責の記録がない日があるときだけ1行で知らせる
+  document.getElementById('lhMetrics').innerHTML = isAdmin && view === 'store' && missingTotal
+    ? `<div class="alert alert-error lh-issues">店責の記録がない日：${missingTotal}日</div>` : '';
+}
+
+function leaderHistoryCsv() {
+  const data = leaderHistoryData;
+  if (!data) return;
+  const person = data.scope === 'all' ? (State.leaderHistoryPerson || '') : '';
+  const rows = data.records.filter(r => !person || r.gmail === person);
+  const fmt = iso => iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false }) : '';
+  const header = ['営業日', '店舗', '役割', '名前', 'メール', '開始', '終了', '時間', '記録した人', 'メモ'];
+  const lines = [header].concat(rows.map(r => [
+    r.businessDate, leaderStoreName(r.storeCode), leaderPositionLabel(r.position), r.castName, r.gmail,
+    fmt(r.startAt), fmt(r.endAt), r.endAt ? Math.round((Date.parse(r.endAt) - Date.parse(r.startAt)) / 900000) / 4 : '',
+    r.createdBy || '', r.note || '',
+  ]));
+  const csv = lines.map(cols => cols.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `店責記録_${data.month}${person ? '_' + (rows[0]?.castName || '') : ''}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+function setupLeaderHistoryEvents() {
+  document.getElementById('roleSelectLeaderHistory').addEventListener('click', () => showLeaderHistoryScreen('roleSelect'));
+  document.getElementById('adminLeaderHistory').addEventListener('click', () => showLeaderHistoryScreen('admin'));
+  document.getElementById('dashOpenLeaderHistory').addEventListener('click', () => {
+    State.leaderHistoryStore = State.dashStoreCode || 'all';
+    State.leaderHistoryMonth = lhMonthOf(State.dashBaseDate || State.businessDate);
+    showLeaderHistoryScreen('dashboard');
+  });
+  document.getElementById('leaderHistoryBack').addEventListener('click', () => {
+    const from = State.leaderHistoryFrom || (HQ_ROLES.includes(State.role) ? 'admin' : 'roleSelect');
+    restoreScreen(from);
+  });
+  const reload = () => { saveSession('leaderHistory'); loadLeaderHistory(); };
+  document.getElementById('lhMonth').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    State.leaderHistoryMonth = e.target.value;
+    reload();
+  });
+  document.getElementById('lhPrevMonth').addEventListener('click', () => {
+    State.leaderHistoryMonth = lhShiftMonth(State.leaderHistoryMonth, -1);
+    document.getElementById('lhMonth').value = State.leaderHistoryMonth;
+    reload();
+  });
+  document.getElementById('lhNextMonth').addEventListener('click', () => {
+    State.leaderHistoryMonth = lhShiftMonth(State.leaderHistoryMonth, 1);
+    document.getElementById('lhMonth').value = State.leaderHistoryMonth;
+    reload();
+  });
+  document.getElementById('lhStore').addEventListener('change', (e) => {
+    State.leaderHistoryStore = e.target.value;
+    reload();
+  });
+  document.getElementById('lhPerson').addEventListener('change', (e) => {
+    State.leaderHistoryPerson = e.target.value;
+    renderLeaderHistory();
+  });
+  document.getElementById('lhCsv').addEventListener('click', leaderHistoryCsv);
+  document.getElementById('lhViewToggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-lh-view]');
+    if (!btn) return;
+    State.leaderHistoryView = btn.dataset.lhView;
+    renderLeaderHistory();
+  });
+  document.getElementById('lhView').addEventListener('click', (e) => {
+    const who = e.target.closest('[data-lh-person]');
+    if (who) { State.leaderHistoryPerson = who.dataset.lhPerson; renderLeaderHistory(); return; }
+  });
 }

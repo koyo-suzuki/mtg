@@ -1613,3 +1613,117 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
 
 .leader-now-card { padding: 16px 0 4px; }
 .leader-now-card .card-title { padding: 0 16px; margin-bottom: 6px; }
+
+/* =====================================================
+   店責の記録ページ
+   ===================================================== */
+.lh-controls { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 640px) { .lh-controls { grid-template-columns: 1.2fr 1fr 1fr; } }
+.lh-month { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; }
+.lh-month .btn { padding: 8px 12px; font-size: 1.1rem; line-height: 1; }
+.lh-card-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lh-note { margin-top: 10px; }
+.lh-table td, .lh-table th { white-space: nowrap; }
+.lh-name-btn { border: 0; background: none; padding: 0; color: var(--primary); font-weight: 700; font-size: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.lh-empty { padding: 16px; }
+
+.lh-day { border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 0 12px; }
+.lh-day + .lh-day { margin-top: 8px; }
+.lh-day-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 800; font-size: 0.9375rem; padding: 12px 0; cursor: pointer; list-style: none; }
+.lh-day-head::-webkit-details-marker { display: none; }
+.lh-day-head::before { content: "▸"; color: var(--text-light); font-size: 0.8rem; transition: transform 0.15s; }
+.lh-day[open] > .lh-day-head::before { transform: rotate(90deg); }
+.lh-day[open] > .lh-day-head { border-bottom: 1.5px solid var(--border); }
+.lh-day-count { font-weight: 600; font-size: 0.75rem; color: var(--text-secondary); }
+.lh-store-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.lh-store-row:last-child { border-bottom: 0; }
+.lh-store-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.lh-store-name { font-weight: 700; font-size: 0.875rem; }
+.lh-store-head .btn-text { margin-left: auto; padding: 2px 6px; color: var(--primary); }
+.lh-line { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
+.lh-line > .badge { flex-shrink: 0; margin-top: 6px; margin-right: 0; }
+.lh-segs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.lh-seg {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  padding: 6px 10px; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); font-size: 0.8125rem; color: var(--text); text-align: left;
+}
+button.lh-seg { cursor: pointer; }
+button.lh-seg:hover { border-color: var(--primary-light); background: var(--primary-bg); }
+.lh-seg-name { font-weight: 700; }
+.lh-seg-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.lh-seg-note { flex-basis: 100%; font-size: 0.75rem; color: var(--text-secondary); }
+.lh-arrow { color: var(--text-light); font-size: 0.75rem; }
+.lh-badge-muted { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); }
+.lh-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lh-delete { color: var(--danger); margin: -4px 0 8px; }
+
+/* 店責の記録：シンプル表示 */
+.lh-issues { margin-bottom: 16px; }
+.lh-row { display: grid; grid-template-columns: 7.5em 1fr; gap: 10px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
+.lh-row:last-child { border-bottom: 0; }
+.lh-row-store { font-weight: 700; color: var(--text-secondary); font-size: 0.8125rem; }
+.lh-row-people { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; min-width: 0; }
+.lh-name { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--text); cursor: pointer; text-decoration: underline; text-decoration-color: var(--primary-light); text-underline-offset: 3px; }
+.lh-name:hover { color: var(--primary); }
+.lh-name-plain { font-weight: 700; }
+.lh-sub { color: var(--text-secondary); margin-left: 6px; display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; }
+.lh-sub .lh-name { font-weight: 600; color: var(--text-secondary); }
+.lh-warn { font-size: 0.6875rem; font-weight: 700; color: var(--danger); }
+.lh-missing { border: 0; background: none; padding: 0; font: inherit; font-size: 0.8125rem; font-weight: 700; color: var(--danger); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.lh-table { min-width: 0; }
+.lh-missing.is-pending { color: var(--text-light); text-decoration: none; }
+.lh-row-self { grid-template-columns: 5.5em 1fr; }
+
+/* 店責の記録：店舗別・人別 */
+.lh-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.lh-view-toggle { display: flex; gap: 6px; }
+.lh-toggle-btn {
+  padding: 8px 18px; border: 1.5px solid var(--border); border-radius: 8px; background: transparent;
+  font-size: 0.8125rem; font-weight: 700; color: var(--text-light); white-space: nowrap; cursor: pointer;
+}
+.lh-toggle-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.lh-toggle-btn:hover:not(.active) { border-color: var(--primary-light); color: var(--primary); }
+.lh-actions { display: flex; gap: 6px; }
+.lh-store { padding: 0 16px; margin-bottom: 10px; }
+.lh-store-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 0; cursor: pointer; list-style: none; }
+.lh-store-head::-webkit-details-marker { display: none; }
+.lh-store-head::before { content: "▸"; color: var(--text-light); font-size: 0.8rem; transition: transform 0.15s; }
+.lh-store[open] > .lh-store-head::before { transform: rotate(90deg); }
+.lh-store[open] > .lh-store-head { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.lh-store-title { font-weight: 800; font-size: 0.9375rem; }
+.lh-store-meta { font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; }
+.lh-subhead { font-size: 0.75rem; font-weight: 700; color: var(--text-secondary); margin: 14px 0 6px; }
+.lh-store > :last-child { margin-bottom: 14px; }
+.lh-days td { vertical-align: top; padding: 9px 10px; }
+.lh-days td:not(.lh-date) { line-height: 1.7; }
+.lh-days .lh-name, .lh-days .lh-name-plain { margin-right: 2px; }
+.lh-date { white-space: nowrap; color: var(--text-secondary); font-weight: 700; }
+.lh-muted { color: var(--text-light); }
+.lh-table tr.is-selected td { background: var(--primary-bg); }
+
+/* 店責の記録：日付で見せる */
+.lh-dates-table td { vertical-align: top; padding: 10px; }
+.lh-person-name { font-weight: 700; white-space: nowrap; }
+.lh-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.lh-day-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 5px;
+  border: 1.5px solid var(--border); border-radius: 6px; background: var(--card); font: inherit; font-size: 0.75rem; font-weight: 700;
+  color: var(--text); font-variant-numeric: tabular-nums; }
+button.lh-day-chip { cursor: pointer; }
+button.lh-day-chip:hover { border-color: var(--primary-light); background: var(--primary-bg); }
+.lh-day-chip.is-warn { border-color: var(--danger); color: var(--danger); }
+.lh-day-chip.is-missing { border-style: dashed; border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
+.lh-days-count { font-size: 0.6875rem; color: var(--text-secondary); font-weight: 600; margin-left: 4px; }
+.lh-missing-row td { background: var(--danger-bg); }
+.lh-missing-row .lh-person-name { color: var(--danger); }
+.lh-person-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.lh-store .table-wrapper { margin-bottom: 14px; }
+
+/* 兼任・途中交代の印 */
+.lh-day-chip { gap: 2px; }
+.lh-mark { display: inline-flex; align-items: center; justify-content: center; font-size: 0.5625rem; font-weight: 800; line-height: 1;
+  padding: 2px 3px; border-radius: 4px; }
+.lh-mark.is-kennin { background: #FEF5E7; color: #D68910; }
+.lh-mark.is-handover { background: var(--primary-bg); color: var(--primary); }
+.lh-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 0.75rem; color: var(--text-secondary); margin: -6px 0 14px; }
+.lh-legend .lh-mark { margin-right: 2px; }

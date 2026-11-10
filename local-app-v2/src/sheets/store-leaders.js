@@ -19,8 +19,10 @@ const SHEET_NAME = 'store_leaders';
 const HEADER = [
   'id', 'businessDate', 'storeCode', 'position', 'gmail', 'castName',
   'startAt', 'endAt', 'createdBy', 'createdAt', 'updatedAt', 'deletedAt',
+  'updatedBy', 'note',
 ];
-const RANGE = `${SHEET_NAME}!A2:L`;
+const RANGE = `${SHEET_NAME}!A2:N`;
+const LAST_COL = 'N';
 const POSITIONS = ['leader', 'sub'];
 
 function spreadsheetId() {
@@ -54,6 +56,8 @@ function toRecord(values, index) {
     createdAt: values[9] || '',
     updatedAt: values[10] || '',
     deletedAt: values[11] || '',
+    updatedBy: values[12] || '',
+    note: values[13] || '',
   };
 }
 
@@ -61,11 +65,12 @@ function toValues(r) {
   return [
     r.id, r.businessDate, r.storeCode, r.position, r.gmail, r.castName,
     r.startAt, r.endAt || '', r.createdBy || '', r.createdAt || '', r.updatedAt || '', r.deletedAt || '',
+    r.updatedBy || '', r.note || '',
   ];
 }
 
 function publicRecord(r) {
-  const { sheetRow, deletedAt, createdBy, createdAt, updatedAt, ...rest } = r;
+  const { sheetRow, deletedAt, createdBy, createdAt, updatedAt, updatedBy, ...rest } = r;
   return rest;
 }
 
@@ -82,11 +87,17 @@ async function ensureSheet() {
   if (!exists) {
     try {
       await batchUpdateSpreadsheet(spreadsheetId(), [{ addSheet: { properties: { title: SHEET_NAME } } }]);
-      await updateRange(spreadsheetId(), `${SHEET_NAME}!A1:L1`, [HEADER]);
+      await updateRange(spreadsheetId(), `${SHEET_NAME}!A1:${LAST_COL}1`, [HEADER]);
     } catch (error) {
       // 同時に別インスタンスが作成した場合は、読み直して存在すれば成功とみなす
       const refreshed = await getSpreadsheetMetadata(spreadsheetId());
       if (!(refreshed.sheets || []).some(s => s.properties?.title === SHEET_NAME)) throw error;
+    }
+  } else {
+    // 列を追加したので、古い見出し行なら足りない列名を書き足す
+    const header = (await getRows(spreadsheetId(), `${SHEET_NAME}!A1:${LAST_COL}1`))[0] || [];
+    if (header.length < HEADER.length) {
+      await updateRange(spreadsheetId(), `${SHEET_NAME}!A1:${LAST_COL}1`, [HEADER]);
     }
   }
   sheetChecked = true;
@@ -103,13 +114,14 @@ async function readAll() {
 }
 
 async function writeRecord(r) {
-  await updateRange(spreadsheetId(), `${SHEET_NAME}!A${r.sheetRow}:L${r.sheetRow}`, [toValues(r)]);
+  await updateRange(spreadsheetId(), `${SHEET_NAME}!A${r.sheetRow}:${LAST_COL}${r.sheetRow}`, [toValues(r)]);
 }
 
-async function closeRecords(records, at) {
+async function closeRecords(records, at, editor = '') {
   for (const r of records) {
     r.endAt = at;
     r.updatedAt = at;
+    r.updatedBy = editor;
     await writeRecord(r);
   }
 }
@@ -151,8 +163,8 @@ async function enterStoreLeader({ date, storeCodes, position, gmail, castName, e
     });
   });
 
-  await closeRecords(toClose, at);
-  if (toAppend.length) await appendRows(spreadsheetId(), `${SHEET_NAME}!A:L`, toAppend.map(toValues));
+  await closeRecords(toClose, at, normalizeEmail(editorEmail));
+  if (toAppend.length) await appendRows(spreadsheetId(), `${SHEET_NAME}!A:${LAST_COL}`, toAppend.map(toValues));
   return { added: toAppend.length, closed: toClose.length };
 }
 
@@ -174,8 +186,8 @@ async function handoverStoreLeader({ date, id, toGmail, toCastName, editorEmail 
   const at = nowISO();
   // 次の人がこの店舗で別の役割をしていれば、それも終了する
   const targetActive = all.filter(r => isActive(r, date) && r.storeCode === current.storeCode && r.gmail === target);
-  await closeRecords([current, ...targetActive], at);
-  await appendRows(spreadsheetId(), `${SHEET_NAME}!A:L`, [toValues({
+  await closeRecords([current, ...targetActive], at, editor);
+  await appendRows(spreadsheetId(), `${SHEET_NAME}!A:${LAST_COL}`, [toValues({
     id: newId(), businessDate: date, storeCode: current.storeCode, position: current.position,
     gmail: target, castName: toCastName || '', startAt: at, endAt: '',
     createdBy: editor, createdAt: at, updatedAt: at, deletedAt: '',
@@ -190,7 +202,7 @@ async function endStoreLeaders({ date, ids, editorEmail }) {
   const all = await readAll();
   const targets = all.filter(r => (ids || []).includes(r.id) && isActive(r, date) && r.gmail === editor);
   if (!targets.length) throw new Error('終了できる担当がありません。画面を再読み込みしてください');
-  await closeRecords(targets, nowISO());
+  await closeRecords(targets, nowISO(), editor);
   return { closed: targets.length };
 }
 
@@ -206,6 +218,7 @@ async function deleteStoreLeader({ date, id, editorEmail }) {
   const at = nowISO();
   r.deletedAt = at;
   r.updatedAt = at;
+  r.updatedBy = editor;
   await writeRecord(r);
 }
 
@@ -231,13 +244,13 @@ function effectiveEnd(r, now) {
  * maxStores: 1日に担当した最大店舗数
  * hours: 担当時間の合計
  */
-function summarize(records, { month, storeCode, now = Date.now() }) {
+function summarize(records, { month, storeCode, today = '', now = Date.now() }) {
   const people = new Map();
   records
     .filter(r => !r.deletedAt && r.businessDate.startsWith(month))
     .forEach(r => {
       const key = r.gmail || r.castName;
-      if (!people.has(key)) people.set(key, { gmail: r.gmail, castName: r.castName, days: new Map(), ms: 0, touchesStore: false });
+      if (!people.has(key)) people.set(key, { gmail: r.gmail, castName: r.castName, days: new Map(), ms: 0, touchesStore: false, storeDays: new Set(), unfinished: 0 });
       const p = people.get(key);
       if (r.castName) p.castName = r.castName;
       if (!p.days.has(r.businessDate)) p.days.set(r.businessDate, { leader: false, sub: false, stores: new Set() });
@@ -247,6 +260,8 @@ function summarize(records, { month, storeCode, now = Date.now() }) {
         p.touchesStore = true;
         if (r.position === 'leader') d.leader = true;
         if (r.position === 'sub') d.sub = true;
+        p.storeDays.add(`${r.businessDate}|${r.storeCode}`);
+        if (!r.endAt && today && r.businessDate < today) p.unfinished += 1;
         const start = Date.parse(r.startAt);
         const end = effectiveEnd(r, now);
         if (start && end > start) p.ms += end - start;
@@ -264,6 +279,8 @@ function summarize(records, { month, storeCode, now = Date.now() }) {
         subDays: days.filter(d => d.sub).length,
         kenninDays: days.filter(d => d.stores.size > 1).length,
         maxStores: days.reduce((m, d) => Math.max(m, d.stores.size), 0),
+        storeDays: p.storeDays.size,
+        unfinished: p.unfinished,
         hours: Math.round(p.ms / 900000) / 4, // 15分単位
       };
     })
@@ -275,6 +292,22 @@ async function getStoreLeaderSummary({ month, storeCode }) {
   return summarize(all, { month, storeCode });
 }
 
+/**
+ * 月の記録一覧と人別集計。gmail を渡すとその人の記録だけにする（店責本人が見る場合）。
+ */
+async function getStoreLeaderHistory({ month, storeCode = 'all', gmail = '', today = '' }) {
+  const all = await readAll();
+  const person = normalizeEmail(gmail);
+  const mine = person ? all.filter(r => r.gmail === person) : all;
+  const records = mine
+    .filter(r => !r.deletedAt && r.businessDate.startsWith(month)
+      && (storeCode === 'all' || !storeCode || r.storeCode === storeCode))
+    .sort((a, b) => (b.businessDate.localeCompare(a.businessDate)) || a.storeCode.localeCompare(b.storeCode)
+      || a.position.localeCompare(b.position) || a.startAt.localeCompare(b.startAt))
+    .map(r => ({ ...publicRecord(r), updatedBy: r.updatedBy, createdBy: r.createdBy }));
+  return { records, summary: summarize(mine, { month, storeCode, today }) };
+}
+
 module.exports = {
   getStoreLeaders,
   enterStoreLeader,
@@ -282,6 +315,7 @@ module.exports = {
   endStoreLeaders,
   deleteStoreLeader,
   getStoreLeaderSummary,
+  getStoreLeaderHistory,
   summarize,
   SHEET_NAME,
   HEADER,

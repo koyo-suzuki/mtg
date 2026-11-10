@@ -3,6 +3,7 @@ try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const { verifyGoogleToken } = require('./src/auth/middleware');
 const { authMiddleware } = require('./src/auth/middleware');
 const configReader = require('./src/sheets/config-reader');
@@ -26,7 +27,34 @@ const DEV_LOGIN_ROLES = [
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: false, limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// =====================================================
+// 画面の版（更新したら自動で新しい画面に切り替えるため）
+// =====================================================
+
+const APP_VERSION = String(
+  process.env.VERCEL_GIT_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || Date.now()
+).slice(0, 12);
+const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
+let indexHtmlCache = null;
+
+function renderIndexHtml() {
+  if (!indexHtmlCache) {
+    indexHtmlCache = fs.readFileSync(INDEX_HTML_PATH, 'utf8').replace(/__APP_VERSION__/g, APP_VERSION);
+  }
+  return indexHtmlCache;
+}
+
+app.get(['/', '/index.html'], (req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.type('html').send(renderIndexHtml());
+});
+
+app.get('/api/app-version', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, version: APP_VERSION });
+});
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // =====================================================
 // 営業日（AM 11:00 区切り）
@@ -571,6 +599,32 @@ app.get('/api/store-leaders/summary', async (req, res) => {
     res.json({ success: true, month, summary });
   } catch (error) {
     console.error('Store leader summary error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// ---- 店責の記録ページ（いつ・誰が・どこの店責をしたか） ----
+// 本部（店のトップ・店長・決済者）は全員分、店責本人は自分の記録だけ見られる。見るだけで、修正はシートで行う。
+const STORE_LEADER_ADMIN_ROLES = ['senior_manager', 'manager', 'executive'];
+
+app.get('/api/store-leaders/history', async (req, res) => {
+  const role = req.user.role;
+  const isAdmin = STORE_LEADER_ADMIN_ROLES.includes(role);
+  if (!isAdmin && role !== 'cast_manager') {
+    return res.status(403).json({ success: false, error: '権限がありません' });
+  }
+  const today = getBusinessDate();
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month : today.slice(0, 7);
+  try {
+    const data = await storeLeaders.getStoreLeaderHistory({
+      month,
+      storeCode: req.query.storeCode || 'all',
+      gmail: isAdmin ? '' : req.user.email,
+      today,
+    });
+    res.json({ success: true, month, today, scope: isAdmin ? 'all' : 'self', ...data });
+  } catch (error) {
+    console.error('Store leader history error:', error);
     res.json({ success: false, error: error.message });
   }
 });

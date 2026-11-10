@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>朝礼・終礼シート v2</title>
-  <link rel="stylesheet" href="/styles/style.css">
+  <meta name="app-version" content="__APP_VERSION__">
+  <link rel="stylesheet" href="/styles/style.css?v=__APP_VERSION__">
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -53,6 +54,10 @@
             </div>
             <div class="store-item" id="roleSelectCast">
               <span class="store-item-name">キャストとして入る</span>
+              <span class="store-item-arrow">&rarr;</span>
+            </div>
+            <div class="store-item hidden" id="roleSelectLeaderHistory">
+              <span class="store-item-name">自分の店責の記録を見る</span>
               <span class="store-item-arrow">&rarr;</span>
             </div>
           </div>
@@ -420,6 +425,10 @@
             <span class="store-item-name">遠隔注文を確認</span>
             <span class="store-item-arrow">&rarr;</span>
           </div>
+          <div class="store-item mt-10" id="adminLeaderHistory" style="border-left:3px solid var(--accent);">
+            <span class="store-item-name">店責の記録</span>
+            <span class="store-item-arrow">&rarr;</span>
+          </div>
         </div>
 
         <button id="adminBack" class="btn btn-text btn-block">戻る</button>
@@ -549,6 +558,7 @@
           <div class="card">
             <div class="card-title" id="dashStoreLeadersSummaryTitle">今月の集計</div>
             <div id="dashStoreLeadersSummary"></div>
+            <button type="button" id="dashOpenLeaderHistory" class="btn btn-outline btn-block mt-20">店舗ごとの記録を見る</button>
           </div>
         </div>
 
@@ -560,6 +570,42 @@
             <div id="dashManagerFeedbackList"></div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ========== 店責の記録（いつ・誰が・どこの店責をしたか） ========== -->
+    <div id="leaderHistoryScreen" class="screen hidden">
+      <div class="container">
+        <div class="dash-header">
+          <div class="dash-header-top">
+            <h1>店責の記録</h1>
+            <button id="leaderHistoryBack" class="btn btn-outline btn-sm">戻る</button>
+          </div>
+          <div class="lh-controls">
+            <div class="lh-month">
+              <button type="button" id="lhPrevMonth" class="btn btn-outline btn-sm" aria-label="前の月">&lsaquo;</button>
+              <input type="month" id="lhMonth" class="form-control">
+              <button type="button" id="lhNextMonth" class="btn btn-outline btn-sm" aria-label="次の月">&rsaquo;</button>
+            </div>
+            <select id="lhStore" class="form-control"></select>
+            <select id="lhPerson" class="form-control hidden"></select>
+          </div>
+          <div id="lhScopeNote" class="dash-period-label"></div>
+        </div>
+
+        <div id="lhMetrics"></div>
+
+        <div class="lh-toolbar">
+          <div class="lh-view-toggle" id="lhViewToggle">
+            <button type="button" class="lh-toggle-btn active" data-lh-view="store">店舗別</button>
+            <button type="button" class="lh-toggle-btn" data-lh-view="person">人別</button>
+          </div>
+          <div class="lh-actions">
+            <button type="button" id="lhCsv" class="btn btn-outline btn-sm hidden">CSV</button>
+          </div>
+        </div>
+
+        <div id="lhView"></div>
       </div>
     </div>
 
@@ -600,6 +646,6 @@
 
   </div>
 
-  <script src="/scripts/app.js"></script>
+  <script src="/scripts/app.js?v=__APP_VERSION__"></script>
 </body>
 </html>
