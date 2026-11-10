@@ -1674,3 +1674,25 @@ button.lh-seg:hover { border-color: var(--primary-light); background: var(--prim
 .lh-table { min-width: 0; }
 .lh-missing.is-pending { color: var(--text-light); text-decoration: none; }
 .lh-row-self { grid-template-columns: 5.5em 1fr; }
+
+/* 店責の記録：店舗別・人別 */
+.lh-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.lh-view-toggle { display: flex; gap: 6px; }
+.lh-view-toggle .dash-date-btn { padding: 8px 18px; font-size: 0.8125rem; white-space: nowrap; }
+.lh-actions { display: flex; gap: 6px; }
+.lh-store { padding: 0 16px; margin-bottom: 10px; }
+.lh-store-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 0; cursor: pointer; list-style: none; }
+.lh-store-head::-webkit-details-marker { display: none; }
+.lh-store-head::before { content: "▸"; color: var(--text-light); font-size: 0.8rem; transition: transform 0.15s; }
+.lh-store[open] > .lh-store-head::before { transform: rotate(90deg); }
+.lh-store[open] > .lh-store-head { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.lh-store-title { font-weight: 800; font-size: 0.9375rem; }
+.lh-store-meta { font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; }
+.lh-subhead { font-size: 0.75rem; font-weight: 700; color: var(--text-secondary); margin: 14px 0 6px; }
+.lh-store > :last-child { margin-bottom: 14px; }
+.lh-days td { vertical-align: top; padding: 9px 10px; }
+.lh-days td:not(.lh-date) { line-height: 1.7; }
+.lh-days .lh-name, .lh-days .lh-name-plain { margin-right: 2px; }
+.lh-date { white-space: nowrap; color: var(--text-secondary); font-weight: 700; }
+.lh-muted { color: var(--text-light); }
+.lh-table tr.is-selected td { background: var(--primary-bg); }
