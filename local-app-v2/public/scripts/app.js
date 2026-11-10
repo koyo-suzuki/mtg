@@ -3582,20 +3582,46 @@ function renderLeaderHistory() {
   let missingTotal = 0;
   const dayNum = date => String(Number(date.slice(8, 10)));
 
-  // 担当した日付を並べ、最後に合計の日数を付ける
+  // 兼任：同じ人が同じ日に、時間の重なる別店舗の記録を持つ
+  const endOf = r => r.endAt ? Date.parse(r.endAt) : Infinity;
+  const isKennin = r => data.records.some(o => o.id !== r.id && o.gmail === r.gmail && o.businessDate === r.businessDate
+    && o.storeCode !== r.storeCode && Date.parse(o.startAt) < endOf(r) && Date.parse(r.startAt) < endOf(o));
+  // 途中交代：その店舗・その日・その役割の記録が2件以上ある
+  const isHandover = r => data.records.filter(o => o.storeCode === r.storeCode && o.businessDate === r.businessDate
+    && o.position === r.position).length > 1;
+  let usedKennin = false;
+  let usedHandover = false;
+
+  // 担当した日付を並べ、最後に合計の日数を付ける。兼任・途中交代の日は印を付ける
   const dateChips = rs => {
-    const dates = [...new Set(rs.map(r => r.businessDate))].sort();
+    const byDate = new Map();
+    rs.forEach(r => { if (!byDate.has(r.businessDate)) byDate.set(r.businessDate, []); byDate.get(r.businessDate).push(r); });
+    const dates = [...byDate.keys()].sort();
     if (!dates.length) return '<span class="lh-muted">—</span>';
-    const chips = dates.map(date => `<span class="lh-day-chip" title="${lhDateLabel(date)}">${dayNum(date)}</span>`).join('');
+    const chips = dates.map(date => {
+      const day = byDate.get(date);
+      const kennin = day.some(isKennin);
+      const handover = day.some(isHandover);
+      if (kennin) usedKennin = true;
+      if (handover) usedHandover = true;
+      const marks = `${kennin ? '<span class="lh-mark is-kennin">兼</span>' : ''}${handover ? '<span class="lh-mark is-handover">交</span>' : ''}`;
+      return `<span class="lh-day-chip" title="${lhDateLabel(date)}">${dayNum(date)}${marks}</span>`;
+    }).join('');
     return `<span class="lh-chips">${chips}<span class="lh-days-count">${dates.length}日</span></span>`;
   };
+  const legend = () => (usedKennin || usedHandover)
+    ? `<p class="lh-legend">${usedKennin ? '<span class="lh-mark is-kennin">兼</span>同じ日にほかの店舗も担当　' : ''}${usedHandover ? '<span class="lh-mark is-handover">交</span>その日の途中で交代' : ''}</p>` : '';
 
   if (view === 'store') {
     // ---- 店舗別：店舗ごとに、誰が何日に店責・副店責をしたか ----
     const storeCode = State.leaderHistoryStore || 'all';
     const stores = (State.leaderStores || []).filter(s => storeCode === 'all' || s.code === storeCode);
-    const pastDates = lhMonthDates(data.month, today).filter(d => d < today);
+    // 記録が始まった日より前は「記録なし」にしない
+    const firstDate = data.records.reduce((m, r) => (!m || r.businessDate < m ? r.businessDate : m), '');
+    const pastDates = firstDate ? lhMonthDates(data.month, today).filter(d => d < today && d >= firstDate) : [];
     html = stores.map(s => {
+      usedKennin = false;
+      usedHandover = false;
       const rs = data.records.filter(r => r.storeCode === s.code);
       const leaderDates = new Set(rs.filter(r => r.position === 'leader').map(r => r.businessDate));
       const missing = pastDates.filter(d => !leaderDates.has(d));
@@ -3616,18 +3642,19 @@ function renderLeaderHistory() {
       return `<details class="lh-store card" ${stores.length === 1 ? 'open' : ''}>
         <summary class="lh-store-head">
           <span class="lh-store-title">${escapeHtml(s.name)}</span>
-          ${pastDates.length ? `<span class="lh-store-meta">店責の記録 ${pastDates.length - missing.length}/${pastDates.length}日</span>` : ''}
           ${missing.length ? `<span class="lh-warn">記録なし ${missing.length}日</span>` : ''}
         </summary>
         ${peopleRows || missingRow ? `<div class="table-wrapper"><table class="table lh-table lh-dates-table">
           <thead><tr><th>名前</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
-          <tbody>${peopleRows}${missingRow}</tbody></table></div>` : '<p class="text-muted text-sm lh-empty">この月の記録はまだありません</p>'}
+          <tbody>${peopleRows}${missingRow}</tbody></table></div>${legend()}` : '<p class="text-muted text-sm lh-empty">この月の記録はまだありません</p>'}
       </details>`;
     }).join('') || '<p class="text-muted text-center lh-empty">この月の日付がまだありません</p>';
   } else {
     // ---- 人別：一人ずつ、どの店舗で何日に店責・副店責をしたか ----
     const list = data.summary.filter(p => !person || p.gmail === person);
     html = list.map(p => {
+      usedKennin = false;
+      usedHandover = false;
       const rs = data.records.filter(r => r.gmail === p.gmail);
       const storeRows = (State.leaderStores || []).filter(s => rs.some(r => r.storeCode === s.code)).map(s => {
         const inStore = rs.filter(r => r.storeCode === s.code);
@@ -3640,7 +3667,7 @@ function renderLeaderHistory() {
           <span class="lh-store-meta">店責 ${p.leaderDays}日・副店責 ${p.subDays}日${p.kenninDays ? `・兼任 ${p.kenninDays}日` : ''}</span></summary>
         <div class="table-wrapper"><table class="table lh-table lh-dates-table">
           <thead><tr><th>店舗</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
-          <tbody>${storeRows}</tbody></table></div>
+          <tbody>${storeRows}</tbody></table></div>${legend()}
       </details>`;
     }).join('') || '<p class="text-muted text-center lh-empty">この月の記録はまだありません</p>';
   }

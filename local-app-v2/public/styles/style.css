@@ -1718,3 +1718,12 @@ button.lh-day-chip:hover { border-color: var(--primary-light); background: var(-
 .lh-missing-row .lh-person-name { color: var(--danger); }
 .lh-person-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .lh-store .table-wrapper { margin-bottom: 14px; }
+
+/* 兼任・途中交代の印 */
+.lh-day-chip { gap: 2px; }
+.lh-mark { display: inline-flex; align-items: center; justify-content: center; font-size: 0.5625rem; font-weight: 800; line-height: 1;
+  padding: 2px 3px; border-radius: 4px; }
+.lh-mark.is-kennin { background: #FEF5E7; color: #D68910; }
+.lh-mark.is-handover { background: var(--primary-bg); color: var(--primary); }
+.lh-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 0.75rem; color: var(--text-secondary); margin: -6px 0 14px; }
+.lh-legend .lh-mark { margin-right: 2px; }
