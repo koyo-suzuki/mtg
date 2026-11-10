@@ -1613,3 +1613,47 @@ label.switch-label { display: flex; align-items: center; gap: 10px; cursor: poin
 
 .leader-now-card { padding: 16px 0 4px; }
 .leader-now-card .card-title { padding: 0 16px; margin-bottom: 6px; }
+
+/* =====================================================
+   店責の記録ページ
+   ===================================================== */
+.lh-controls { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 640px) { .lh-controls { grid-template-columns: 1.2fr 1fr 1fr; } }
+.lh-month { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; }
+.lh-month .btn { padding: 8px 12px; font-size: 1.1rem; line-height: 1; }
+.lh-card-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lh-note { margin-top: 10px; }
+.lh-table td, .lh-table th { white-space: nowrap; }
+.lh-name-btn { border: 0; background: none; padding: 0; color: var(--primary); font-weight: 700; font-size: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.lh-empty { padding: 16px; }
+
+.lh-day { border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 0 12px; }
+.lh-day + .lh-day { margin-top: 8px; }
+.lh-day-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 800; font-size: 0.9375rem; padding: 12px 0; cursor: pointer; list-style: none; }
+.lh-day-head::-webkit-details-marker { display: none; }
+.lh-day-head::before { content: "▸"; color: var(--text-light); font-size: 0.8rem; transition: transform 0.15s; }
+.lh-day[open] > .lh-day-head::before { transform: rotate(90deg); }
+.lh-day[open] > .lh-day-head { border-bottom: 1.5px solid var(--border); }
+.lh-day-count { font-weight: 600; font-size: 0.75rem; color: var(--text-secondary); }
+.lh-store-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.lh-store-row:last-child { border-bottom: 0; }
+.lh-store-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.lh-store-name { font-weight: 700; font-size: 0.875rem; }
+.lh-store-head .btn-text { margin-left: auto; padding: 2px 6px; color: var(--primary); }
+.lh-line { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
+.lh-line > .badge { flex-shrink: 0; margin-top: 6px; margin-right: 0; }
+.lh-segs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.lh-seg {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  padding: 6px 10px; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); font-size: 0.8125rem; color: var(--text); text-align: left;
+}
+button.lh-seg { cursor: pointer; }
+button.lh-seg:hover { border-color: var(--primary-light); background: var(--primary-bg); }
+.lh-seg-name { font-weight: 700; }
+.lh-seg-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.lh-seg-note { flex-basis: 100%; font-size: 0.75rem; color: var(--text-secondary); }
+.lh-arrow { color: var(--text-light); font-size: 0.75rem; }
+.lh-badge-muted { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); }
+.lh-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lh-delete { color: var(--danger); margin: -4px 0 8px; }

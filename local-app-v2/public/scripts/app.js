@@ -85,6 +85,9 @@ function saveSession(screen) {
     dashBaseDate: State.dashBaseDate,
     dashDateFrom: State.dashDateFrom,
     dashDateTo: State.dashDateTo,
+    leaderHistoryFrom: State.leaderHistoryFrom,
+    leaderHistoryMonth: State.leaderHistoryMonth,
+    leaderHistoryStore: State.leaderHistoryStore,
   };
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
 }
@@ -188,6 +191,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     State.dashBaseDate = session.dashBaseDate || null;
     State.dashDateFrom = session.dashDateFrom || null;
     State.dashDateTo = session.dashDateTo || null;
+    State.leaderHistoryFrom = session.leaderHistoryFrom || null;
+    State.leaderHistoryMonth = session.leaderHistoryMonth || null;
+    State.leaderHistoryStore = session.leaderHistoryStore || null;
 
     // 営業日を最新に更新
     try {
@@ -230,6 +236,9 @@ async function restoreScreen(screen) {
       break;
     case 'roleSelect':
       await showRoleSelectScreen();
+      break;
+    case 'leaderHistory':
+      await showLeaderHistoryScreen();
       break;
     default:
       clearSession();
@@ -432,6 +441,7 @@ function setupEvents() {
 
   // 店責・副店責の記録
   setupLeaderEvents();
+  setupLeaderHistoryEvents();
 
   document.getElementById('castStoreBack').addEventListener('click', () => {
     if (shouldUseRoleSelect(State.role)) {
@@ -619,6 +629,7 @@ async function showRoleSelectScreen() {
   document.getElementById('roleSelectGreeting').textContent = `${State.displayName} さん`;
   document.querySelector('#roleSelectManager .store-item-name').textContent =
     State.role === 'manager' ? '管理画面に入る' : '店責・副店責として入る';
+  document.getElementById('roleSelectLeaderHistory').classList.toggle('hidden', State.role !== 'cast_manager');
   document.getElementById('managerMonthlyProgress').innerHTML = '<div class="dash-progress-loading">読み込み中...</div>';
   await loadTopMonthlyProgress('managerMonthlyProgress');
   saveSession('roleSelect');
@@ -3282,6 +3293,19 @@ function renderLeaderModal() {
       ${leaderModalFooter('兼任を記録', 'kennin')}`;
   }
 
+  if (m.type === 'adminEdit') {
+    html = renderLeaderAdminEdit(m);
+  }
+
+  if (m.type === 'adminDelete') {
+    const r = leaderHistoryData?.records.find(x => x.id === m.id);
+    html = `
+      <h2>この記録を削除しますか？</h2>
+      ${r ? `<div class="alert alert-info">${escapeHtml(r.businessDate)}　${escapeHtml(leaderStoreName(r.storeCode))}　${leaderPositionLabel(r.position)}：${escapeHtml(r.castName)}　${lhTimeOf(r.startAt)}〜${lhTimeOf(r.endAt)}</div>` : ''}
+      <p class="lead">削除した記録は集計から外れます。シートには削除した人と日時が残ります。</p>
+      ${leaderModalFooter('削除する', 'adminDelete', 'btn-danger')}`;
+  }
+
   if (m.type === 'del') {
     const r = (State.storeLeaders || []).find(x => x.id === m.id);
     html = `
@@ -3301,6 +3325,10 @@ function leaderCheckedValues(name) {
 async function submitLeaderModal(action, button) {
   const m = leaderModalState;
   if (!m) return;
+  if (action.startsWith('admin')) {
+    await submitLeaderAdmin(action, button);
+    return;
+  }
   button.disabled = true;
   let result = { success: true };
   let message = '';
@@ -3478,4 +3506,347 @@ async function renderDashStoreLeadersTab() {
         <td>${p.kenninDays}日</td><td>${p.maxStores}店</td><td>${p.hours}時間</td>
       </tr>`).join('')}</tbody>
     </table></div>` : '<p class="text-muted text-sm">この月の記録はまだありません</p>';
+}
+
+// =====================================================
+// 店責の記録ページ（いつ・誰が・どこの店責をしたか）
+// 本部は全員分を見て修正できる。店責本人は自分の記録だけ見られる。
+// =====================================================
+
+const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
+let leaderHistoryData = null;
+
+function lhMonthOf(date) {
+  return String(date || State.businessDate || new Date().toISOString()).slice(0, 7);
+}
+
+function lhShiftMonth(month, diff) {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + diff, 1));
+  return d.toISOString().slice(0, 7);
+}
+
+function lhDateLabel(date) {
+  const d = new Date(`${date}T00:00:00Z`);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEKDAYS_JA[d.getUTCDay()]})`;
+}
+
+// 営業日と「HH:MM」から日時を作る。朝5時より前は翌日扱い（営業日の区切りと同じ）。
+function lhToIso(businessDate, hhmm) {
+  if (!businessDate || !/^\d{2}:\d{2}$/.test(hhmm || '')) return '';
+  const d = new Date(`${businessDate}T${hhmm}:00+09:00`);
+  if (Number(hhmm.slice(0, 2)) < 5) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString();
+}
+
+function lhTimeOf(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+async function showLeaderHistoryScreen(from) {
+  if (from) State.leaderHistoryFrom = from;
+  hideAllScreens();
+  document.getElementById('leaderHistoryScreen').classList.remove('hidden');
+  if (!State.leaderHistoryMonth) State.leaderHistoryMonth = lhMonthOf(State.businessDate);
+  document.getElementById('lhMonth').value = State.leaderHistoryMonth;
+  await ensureLeaderStores();
+  const storeSelect = document.getElementById('lhStore');
+  storeSelect.innerHTML = '<option value="all">全店舗</option>' +
+    (State.leaderStores || []).map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.name)}</option>`).join('');
+  storeSelect.value = State.leaderHistoryStore || 'all';
+  saveSession('leaderHistory');
+  await loadLeaderHistory();
+}
+
+async function loadLeaderHistory() {
+  const month = State.leaderHistoryMonth;
+  const storeCode = State.leaderHistoryStore || 'all';
+  document.getElementById('lhDaily').innerHTML = '<p class="text-muted text-sm">読み込み中...</p>';
+  const result = await api(`/api/store-leaders/history?${new URLSearchParams({ month, storeCode })}`);
+  if (!result.success) {
+    document.getElementById('lhDaily').innerHTML = `<p class="text-muted text-sm">${escapeHtml(result.error || '記録を取得できませんでした')}</p>`;
+    return;
+  }
+  leaderHistoryData = result;
+  if (result.canEdit && !(State.castMaster || []).length) await loadCastMaster();
+  renderLeaderHistory();
+}
+
+function renderLeaderHistory() {
+  const data = leaderHistoryData;
+  if (!data) return;
+  const isAdmin = data.canEdit;
+  const person = isAdmin ? (State.leaderHistoryPerson || '') : '';
+  const records = data.records.filter(r => !person || r.gmail === person);
+  const summary = data.summary.filter(p => !person || p.gmail === person);
+  const today = data.today;
+
+  // 絞り込み・ボタンの表示
+  const personSelect = document.getElementById('lhPerson');
+  personSelect.classList.toggle('hidden', !isAdmin);
+  if (isAdmin) {
+    personSelect.innerHTML = '<option value="">全員</option>' + data.summary
+      .slice().sort((a, b) => a.castName.localeCompare(b.castName, 'ja'))
+      .map(p => `<option value="${escapeHtml(p.gmail)}">${escapeHtml(p.castName)}</option>`).join('');
+    personSelect.value = person;
+  }
+  document.getElementById('lhCsv').classList.toggle('hidden', !records.length);
+  document.getElementById('lhAdd').classList.toggle('hidden', !isAdmin);
+  document.getElementById('lhScopeNote').textContent = isAdmin
+    ? '全員の記録です。記録をタップすると修正できます。'
+    : 'あなたの記録だけを表示しています。間違いがあれば本部に連絡してください。';
+
+  // 店舗ごと・日ごとにまとめる
+  const storeCode = State.leaderHistoryStore || 'all';
+  const stores = (State.leaderStores || []).filter(s => storeCode === 'all' || s.code === storeCode);
+  const byDate = new Map();
+  records.forEach(r => {
+    if (!byDate.has(r.businessDate)) byDate.set(r.businessDate, []);
+    byDate.get(r.businessDate).push(r);
+  });
+  // 本部が全員を見ているときは、記録が1件でもある日について記録のない店舗も出す
+  const dates = [...byDate.keys()].sort().reverse();
+  let missing = 0;
+  const unfinished = records.filter(r => !r.endAt && r.businessDate < today).length;
+
+  const segment = (r, dayRecords) => {
+    const endOf = x => x.endAt ? Date.parse(x.endAt) : Infinity;
+    const overlapOther = dayRecords.some(o => o.id !== r.id && o.gmail === r.gmail && o.storeCode !== r.storeCode
+      && Date.parse(o.startAt) < endOf(r) && Date.parse(r.startAt) < endOf(o));
+    const open = !r.endAt;
+    const flags = [
+      overlapOther ? '<span class="badge badge-kennin">兼任</span>' : '',
+      open && r.businessDate < today ? '<span class="badge badge-leader-none">終了未入力</span>' : '',
+      open && r.businessDate >= today ? '<span class="badge badge-sub">担当中</span>' : '',
+      r.createdBy && r.createdBy !== r.gmail ? '<span class="badge lh-badge-muted">代理記録</span>' : '',
+    ].join('');
+    const body = `<span class="lh-seg-name">${escapeHtml(r.castName)}</span>
+      <span class="lh-seg-time">${lhTimeOf(r.startAt)}〜${r.endAt ? lhTimeOf(r.endAt) : ''}</span>${flags}
+      ${r.note ? `<span class="lh-seg-note">${escapeHtml(r.note)}</span>` : ''}`;
+    return isAdmin
+      ? `<button type="button" class="lh-seg" data-lh-edit="${escapeHtml(r.id)}">${body}</button>`
+      : `<div class="lh-seg">${body}</div>`;
+  };
+
+  const showMissing = isAdmin && !person;
+  const dayHtml = dates.map((date, dayIndex) => {
+    const dayRecords = byDate.get(date);
+    let dayMissing = 0;
+    const storeRows = (showMissing ? stores : stores.filter(s => dayRecords.some(r => r.storeCode === s.code)))
+      .map(s => {
+        const rs = dayRecords.filter(r => r.storeCode === s.code);
+        const line = pos => {
+          const segs = rs.filter(r => r.position === pos);
+          if (!segs.length) return '';
+          return `<div class="lh-line"><span class="badge badge-${pos}">${leaderPositionLabel(pos)}</span><div class="lh-segs">${segs.map(r => segment(r, dayRecords)).join('<span class="lh-arrow">→</span>')}</div></div>`;
+        };
+        const hasLeader = rs.some(r => r.position === 'leader');
+        const flagMissing = showMissing && !hasLeader;
+        if (flagMissing) { missing += 1; dayMissing += 1; }
+        const add = isAdmin ? `<button type="button" class="btn btn-text btn-sm" data-lh-add="${escapeHtml(s.code)}" data-date="${date}">追加</button>` : '';
+        return `<div class="lh-store-row">
+          <div class="lh-store-head"><span class="lh-store-name">${escapeHtml(s.name)}</span>${flagMissing ? '<span class="badge badge-leader-none">店責の記録なし</span>' : ''}${add}</div>
+          ${line('leader')}${line('sub')}
+        </div>`;
+      }).join('');
+    const dayUnfinished = dayRecords.filter(r => !r.endAt && r.businessDate < today).length;
+    const headFlags = [
+      dayMissing ? `<span class="badge badge-leader-none">記録なし ${dayMissing}</span>` : '',
+      dayUnfinished ? `<span class="badge badge-leader-none">終了未入力 ${dayUnfinished}</span>` : '',
+    ].join('');
+    return `<details class="lh-day" ${dayIndex === 0 ? 'open' : ''}>
+      <summary class="lh-day-head"><span>${lhDateLabel(date)}</span><span class="lh-day-count">${dayRecords.length}件</span>${headFlags}</summary>
+      ${storeRows}
+    </details>`;
+  }).join('');
+
+  document.getElementById('lhDaily').innerHTML = dayHtml || '<p class="text-muted text-center lh-empty">この月の記録はまだありません</p>';
+
+  const totalStoreDays = summary.reduce((n, p) => n + p.storeDays, 0);
+  document.getElementById('lhMetrics').innerHTML = `
+    <div class="dash-metric"><div class="dash-metric-label">${isAdmin ? '記録した人' : '店責をした日'}</div>
+      <div class="dash-metric-value">${isAdmin ? `${summary.length}人` : `${(summary[0]?.leaderDays || 0)}日`}</div>
+      <div class="dash-metric-sub">${isAdmin ? `担当店舗日 合計 ${totalStoreDays}` : `副店責 ${(summary[0]?.subDays || 0)}日`}</div></div>
+    <div class="dash-metric"><div class="dash-metric-label">終了未入力</div>
+      <div class="dash-metric-value ${unfinished ? 'is-warning' : 'is-good'}">${unfinished}件</div>
+      <div class="dash-metric-sub">「担当を終える」の押し忘れ</div></div>
+    ${isAdmin && !person ? `<div class="dash-metric"><div class="dash-metric-label">店責の記録なし</div>
+      <div class="dash-metric-value ${missing ? 'is-warning' : 'is-good'}">${missing}件</div>
+      <div class="dash-metric-sub">記録がある日の店舗×日</div></div>` : ''}`;
+
+  document.getElementById('lhSummary').innerHTML = summary.length ? `
+    <div class="table-wrapper"><table class="table lh-table">
+      <thead><tr><th>名前</th><th>店責</th><th>副店責</th><th>担当店舗日</th><th>兼任日</th><th>時間</th><th>終了未入力</th></tr></thead>
+      <tbody>${summary.map(p => `<tr>
+        <td>${isAdmin ? `<button type="button" class="lh-name-btn" data-lh-person="${escapeHtml(p.gmail)}">${escapeHtml(p.castName)}</button>` : `<b>${escapeHtml(p.castName)}</b>`}</td>
+        <td>${p.leaderDays}日</td><td>${p.subDays}日</td><td>${p.storeDays}</td><td>${p.kenninDays}日</td>
+        <td>${p.hours}時間</td><td class="${p.unfinished ? 'is-warning' : ''}">${p.unfinished}件</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : '<p class="text-muted text-sm">この月の記録はまだありません</p>';
+}
+
+function leaderHistoryCsv() {
+  const data = leaderHistoryData;
+  if (!data) return;
+  const person = data.canEdit ? (State.leaderHistoryPerson || '') : '';
+  const rows = data.records.filter(r => !person || r.gmail === person);
+  const fmt = iso => iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false }) : '';
+  const header = ['営業日', '店舗', '役割', '名前', 'メール', '開始', '終了', '時間', '記録した人', 'メモ'];
+  const lines = [header].concat(rows.map(r => [
+    r.businessDate, leaderStoreName(r.storeCode), leaderPositionLabel(r.position), r.castName, r.gmail,
+    fmt(r.startAt), fmt(r.endAt), r.endAt ? Math.round((Date.parse(r.endAt) - Date.parse(r.startAt)) / 900000) / 4 : '',
+    r.createdBy || '', r.note || '',
+  ]));
+  const csv = lines.map(cols => cols.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `店責記録_${data.month}${person ? '_' + (rows[0]?.castName || '') : ''}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+// ---- 本部による追加・修正 ----
+
+function openLeaderAdminEdit({ id, storeCode, date }) {
+  const r = id ? leaderHistoryData.records.find(x => x.id === id) : null;
+  openLeaderModal({
+    type: 'adminEdit',
+    id: r?.id || '',
+    businessDate: r?.businessDate || date || State.businessDate,
+    storeCode: r?.storeCode || storeCode || (State.leaderHistoryStore !== 'all' && State.leaderHistoryStore) || State.leaderStores?.[0]?.code || '',
+    position: r?.position || 'leader',
+    gmail: r?.gmail || '',
+    start: r ? lhTimeOf(r.startAt) : '',
+    end: r ? lhTimeOf(r.endAt) : '',
+    note: r?.note || '',
+  });
+}
+
+function renderLeaderAdminEdit(m) {
+  const casts = (State.castMaster || []).slice().sort((a, b) => (a.castName || '').localeCompare(b.castName || '', 'ja'));
+  const hasPerson = casts.some(c => c.gmail === m.gmail);
+  const original = m.id ? leaderHistoryData.records.find(x => x.id === m.id) : null;
+  return `
+    <h2>${m.id ? '記録を直す' : '記録を追加'}</h2>
+    <p class="lead">朝5時より前の時刻は、翌日の深夜として扱います。</p>
+    <div class="form-group"><label for="lhEditDate">営業日</label>
+      <input type="date" id="lhEditDate" class="form-control" value="${escapeHtml(m.businessDate)}"></div>
+    <div class="form-group"><label for="lhEditStore">店舗</label>
+      <select id="lhEditStore" class="form-control">${(State.leaderStores || []).map(s => `<option value="${escapeHtml(s.code)}" ${s.code === m.storeCode ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select></div>
+    <div class="form-group"><label>役割</label><div class="chip-list">
+      ${['leader', 'sub'].map(p => `<label class="chip"><input type="radio" name="lhEditPosition" value="${p}" ${m.position === p ? 'checked' : ''}><span>${leaderPositionLabel(p)}</span></label>`).join('')}
+    </div></div>
+    <div class="form-group"><label for="lhEditPerson">担当者</label>
+      <select id="lhEditPerson" class="form-control">
+        <option value="">選んでください</option>
+        ${!hasPerson && original ? `<option value="${escapeHtml(original.gmail)}" selected>${escapeHtml(original.castName)}</option>` : ''}
+        ${casts.map(c => `<option value="${escapeHtml(c.gmail)}" ${c.gmail === m.gmail ? 'selected' : ''}>${escapeHtml(c.castName)}</option>`).join('')}
+      </select></div>
+    <div class="lh-time-row">
+      <div class="form-group"><label for="lhEditStart">開始</label><input type="time" id="lhEditStart" class="form-control" value="${escapeHtml(m.start)}"></div>
+      <div class="form-group"><label for="lhEditEnd">終了</label><input type="time" id="lhEditEnd" class="form-control" value="${escapeHtml(m.end)}"></div>
+    </div>
+    <div class="form-group"><label for="lhEditNote">メモ（修正の理由など）</label>
+      <input type="text" id="lhEditNote" class="form-control" maxlength="200" value="${escapeHtml(m.note)}" placeholder="例：記録漏れのため本部で追加"></div>
+    ${m.id ? '<button type="button" class="btn btn-text btn-block lh-delete" data-leader-act="adminAskDelete">この記録を削除する</button>' : ''}
+    ${leaderModalFooter('保存する', 'adminSave')}`;
+}
+
+async function submitLeaderAdmin(action, button) {
+  const m = leaderModalState;
+  if (action === 'adminAskDelete') {
+    leaderModalState = { ...m, type: 'adminDelete' };
+    renderLeaderModal();
+    return;
+  }
+  button.disabled = true;
+  let result;
+  if (action === 'adminSave') {
+    const businessDate = document.getElementById('lhEditDate').value;
+    const start = document.getElementById('lhEditStart').value;
+    const end = document.getElementById('lhEditEnd').value;
+    if (!start) {
+      button.disabled = false;
+      showToast('error', '開始時刻を入れてください');
+      return;
+    }
+    result = await api('/api/store-leaders/admin/save', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: m.id,
+        businessDate,
+        storeCode: document.getElementById('lhEditStore').value,
+        position: document.querySelector('#leaderModal input[name="lhEditPosition"]:checked')?.value,
+        gmail: document.getElementById('lhEditPerson').value,
+        startAt: lhToIso(businessDate, start),
+        endAt: end ? lhToIso(businessDate, end) : '',
+        note: document.getElementById('lhEditNote').value,
+      }),
+    });
+  } else {
+    result = await api('/api/store-leaders/admin/delete', { method: 'POST', body: JSON.stringify({ id: m.id }) });
+  }
+  if (!result.success) {
+    button.disabled = false;
+    showToast('error', result.error || '保存できませんでした');
+    return;
+  }
+  closeLeaderModal();
+  showToast('success', action === 'adminSave' ? '保存しました' : '削除しました');
+  await loadLeaderHistory();
+}
+
+function setupLeaderHistoryEvents() {
+  document.getElementById('roleSelectLeaderHistory').addEventListener('click', () => showLeaderHistoryScreen('roleSelect'));
+  document.getElementById('adminLeaderHistory').addEventListener('click', () => showLeaderHistoryScreen('admin'));
+  document.getElementById('dashOpenLeaderHistory').addEventListener('click', () => {
+    State.leaderHistoryStore = State.dashStoreCode || 'all';
+    State.leaderHistoryMonth = lhMonthOf(State.dashBaseDate || State.businessDate);
+    showLeaderHistoryScreen('dashboard');
+  });
+  document.getElementById('leaderHistoryBack').addEventListener('click', () => {
+    const from = State.leaderHistoryFrom || (HQ_ROLES.includes(State.role) ? 'admin' : 'roleSelect');
+    restoreScreen(from);
+  });
+  const reload = () => { saveSession('leaderHistory'); loadLeaderHistory(); };
+  document.getElementById('lhMonth').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    State.leaderHistoryMonth = e.target.value;
+    reload();
+  });
+  document.getElementById('lhPrevMonth').addEventListener('click', () => {
+    State.leaderHistoryMonth = lhShiftMonth(State.leaderHistoryMonth, -1);
+    document.getElementById('lhMonth').value = State.leaderHistoryMonth;
+    reload();
+  });
+  document.getElementById('lhNextMonth').addEventListener('click', () => {
+    State.leaderHistoryMonth = lhShiftMonth(State.leaderHistoryMonth, 1);
+    document.getElementById('lhMonth').value = State.leaderHistoryMonth;
+    reload();
+  });
+  document.getElementById('lhStore').addEventListener('change', (e) => {
+    State.leaderHistoryStore = e.target.value;
+    reload();
+  });
+  document.getElementById('lhPerson').addEventListener('change', (e) => {
+    State.leaderHistoryPerson = e.target.value;
+    renderLeaderHistory();
+  });
+  document.getElementById('lhCsv').addEventListener('click', leaderHistoryCsv);
+  document.getElementById('lhAdd').addEventListener('click', () => openLeaderAdminEdit({}));
+  document.getElementById('lhSummary').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-lh-person]');
+    if (!btn) return;
+    State.leaderHistoryPerson = btn.dataset.lhPerson;
+    renderLeaderHistory();
+  });
+  document.getElementById('lhDaily').addEventListener('click', (e) => {
+    const edit = e.target.closest('[data-lh-edit]');
+    if (edit) { openLeaderAdminEdit({ id: edit.dataset.lhEdit }); return; }
+    const add = e.target.closest('[data-lh-add]');
+    if (add) openLeaderAdminEdit({ storeCode: add.dataset.lhAdd, date: add.dataset.date });
+  });
 }
