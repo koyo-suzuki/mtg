@@ -604,7 +604,7 @@ app.get('/api/store-leaders/summary', async (req, res) => {
 });
 
 // ---- 店責の記録ページ（いつ・誰が・どこの店責をしたか） ----
-// 本部（店のトップ・店長・決済者）は全員分を見て修正できる。店責本人は自分の記録だけ見られる。
+// 本部（店のトップ・店長・決済者）は全員分、店責本人は自分の記録だけ見られる。見るだけで、修正はシートで行う。
 const STORE_LEADER_ADMIN_ROLES = ['senior_manager', 'manager', 'executive'];
 
 app.get('/api/store-leaders/history', async (req, res) => {
@@ -622,51 +622,9 @@ app.get('/api/store-leaders/history', async (req, res) => {
       gmail: isAdmin ? '' : req.user.email,
       today,
     });
-    res.json({ success: true, month, today, scope: isAdmin ? 'all' : 'self', canEdit: isAdmin, ...data });
+    res.json({ success: true, month, today, scope: isAdmin ? 'all' : 'self', ...data });
   } catch (error) {
     console.error('Store leader history error:', error);
-    res.json({ success: false, error: error.message });
-  }
-});
-
-function requireStoreLeaderAdmin(req, res, next) {
-  if (!STORE_LEADER_ADMIN_ROLES.includes(req.user.role)) {
-    return res.status(403).json({ success: false, error: '修正できるのは本部だけです' });
-  }
-  next();
-}
-
-app.post('/api/store-leaders/admin/save', requireStoreLeaderAdmin, async (req, res) => {
-  const body = req.body || {};
-  try {
-    const casts = await configReader.getCastMembers();
-    const person = casts.find(c => c.gmail === String(body.gmail || '').trim().toLowerCase());
-    if (!person) return res.json({ success: false, error: '担当者が見つかりません' });
-    const result = await storeLeaders.saveStoreLeaderByAdmin({
-      id: body.id || '',
-      businessDate: body.businessDate,
-      storeCode: body.storeCode,
-      position: body.position,
-      gmail: person.gmail,
-      castName: person.castName,
-      startAt: body.startAt,
-      endAt: body.endAt || '',
-      note: body.note || '',
-      editorEmail: req.user.email,
-    });
-    res.json({ success: true, ...result });
-  } catch (error) {
-    console.error('Store leader admin save error:', error);
-    res.json({ success: false, error: error.message });
-  }
-});
-
-app.post('/api/store-leaders/admin/delete', requireStoreLeaderAdmin, async (req, res) => {
-  try {
-    await storeLeaders.deleteStoreLeaderByAdmin({ id: req.body?.id, editorEmail: req.user.email });
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Store leader admin delete error:', error);
     res.json({ success: false, error: error.message });
   }
 });

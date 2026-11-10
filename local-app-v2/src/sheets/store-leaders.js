@@ -222,68 +222,6 @@ async function deleteStoreLeader({ date, id, editorEmail }) {
   await writeRecord(r);
 }
 
-// ---- 本部による修正（記録漏れ・終了押し忘れなど） ----
-
-function validIso(value) {
-  return Boolean(value) && !Number.isNaN(Date.parse(value));
-}
-
-/**
- * 本部が記録を追加・修正する。id があれば修正、なければ追加。
- * 同じ店舗・同じ役割で時間が重なる記録があればエラー（店責・副店責はそれぞれ1人）。
- */
-async function saveStoreLeaderByAdmin({ id, businessDate, storeCode, position, gmail, castName, startAt, endAt, note, editorEmail, now = Date.now() }) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(businessDate || ''))) throw new Error('営業日を確認してください');
-  if (!storeCode) throw new Error('店舗を選んでください');
-  if (!POSITIONS.includes(position)) throw new Error('役割を選んでください');
-  const person = normalizeEmail(gmail);
-  if (!person) throw new Error('担当者を選んでください');
-  if (!validIso(startAt)) throw new Error('開始時刻を確認してください');
-  if (endAt && !validIso(endAt)) throw new Error('終了時刻を確認してください');
-  if (endAt && Date.parse(endAt) <= Date.parse(startAt)) throw new Error('終了は開始より後にしてください');
-
-  await ensureSheet();
-  const all = await readAll();
-  const editor = normalizeEmail(editorEmail);
-  const target = id ? all.find(r => r.id === id && !r.deletedAt) : null;
-  if (id && !target) throw new Error('この記録は見つかりません。画面を再読み込みしてください');
-
-  const start = Date.parse(startAt);
-  const end = endAt ? Date.parse(endAt) : effectiveEnd({ businessDate, endAt: '' }, now);
-  const overlap = all.find(r => r.id !== id && !r.deletedAt && r.businessDate === businessDate
-    && r.storeCode === storeCode && r.position === position
-    && Date.parse(r.startAt) < end && start < effectiveEnd(r, now));
-  if (overlap) {
-    throw new Error(`同じ時間帯に${overlap.castName || overlap.gmail}さんの記録があります。先にそちらを直してください`);
-  }
-
-  const at = nowISO();
-  const fields = {
-    businessDate, storeCode, position, gmail: person, castName: castName || '',
-    startAt: new Date(start).toISOString(), endAt: endAt ? new Date(Date.parse(endAt)).toISOString() : '',
-    note: String(note || '').slice(0, 200), updatedAt: at, updatedBy: editor,
-  };
-  if (target) {
-    Object.assign(target, fields);
-    await writeRecord(target);
-    return { id: target.id };
-  }
-  const record = { id: newId(), ...fields, createdBy: editor, createdAt: at, deletedAt: '' };
-  await appendRows(spreadsheetId(), `${SHEET_NAME}!A:${LAST_COL}`, [toValues(record)]);
-  return { id: record.id };
-}
-
-async function deleteStoreLeaderByAdmin({ id, editorEmail }) {
-  const all = await readAll();
-  const r = all.find(x => x.id === id && !x.deletedAt);
-  if (!r) throw new Error('この記録は見つかりません。画面を再読み込みしてください');
-  const at = nowISO();
-  r.deletedAt = at;
-  r.updatedAt = at;
-  r.updatedBy = normalizeEmail(editorEmail);
-  await writeRecord(r);
-}
-
 // ---- 月間集計 ----
 
 function nextDate(date) {
@@ -378,8 +316,6 @@ module.exports = {
   deleteStoreLeader,
   getStoreLeaderSummary,
   getStoreLeaderHistory,
-  saveStoreLeaderByAdmin,
-  deleteStoreLeaderByAdmin,
   summarize,
   SHEET_NAME,
   HEADER,

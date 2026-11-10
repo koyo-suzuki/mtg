@@ -184,33 +184,3 @@ test('history returns month records and summary, limited to one person when aske
   const store = await mod.getStoreLeaderHistory({ month: '2026-11', storeCode: 'IKB', today: '2026-11-10' });
   assert.deepEqual(store.records.map(r => r.storeCode), ['IKB']);
 });
-
-test('admin can add a missing record, fix an end time and delete, with overlap protection', async () => {
-  const { mod, rows } = loadModule();
-  const now = Date.parse('2026-11-10T03:00:00Z');
-  const base = { businessDate: DATE, storeCode: 'store_006', position: 'leader', editorEmail: 'boss@example.com', now };
-  const { id } = await mod.saveStoreLeaderByAdmin({ ...base, gmail: 'miku@example.com', castName: 'みく', startAt: '2026-11-09T09:00:00Z', note: '記録漏れ' });
-  assert.equal(rows[0][12], 'boss@example.com');
-  assert.equal(rows[0][13], '記録漏れ');
-  assert.equal(rows[0][8], 'boss@example.com');
-
-  await assert.rejects(
-    mod.saveStoreLeaderByAdmin({ ...base, gmail: 'yuna@example.com', castName: 'ゆな', startAt: '2026-11-09T12:00:00Z' }),
-    /みくさんの記録があります/
-  );
-
-  await mod.saveStoreLeaderByAdmin({ ...base, id, gmail: 'miku@example.com', castName: 'みく', startAt: '2026-11-09T09:00:00Z', endAt: '2026-11-09T12:00:00Z' });
-  assert.equal(rows[0][7], '2026-11-09T12:00:00.000Z');
-  await mod.saveStoreLeaderByAdmin({ ...base, gmail: 'yuna@example.com', castName: 'ゆな', startAt: '2026-11-09T12:00:00Z', endAt: '2026-11-09T16:00:00Z' });
-  assert.equal(rows.length, 2, 'back-to-back records do not overlap');
-
-  await assert.rejects(
-    mod.saveStoreLeaderByAdmin({ ...base, gmail: 'a@example.com', startAt: '2026-11-09T12:00:00Z', endAt: '2026-11-09T11:00:00Z' }),
-    /終了は開始より後/
-  );
-
-  await mod.deleteStoreLeaderByAdmin({ id, editorEmail: 'boss@example.com' });
-  assert.ok(rows[0][11]);
-  const listed = await mod.getStoreLeaders(DATE);
-  assert.deepEqual(listed.map(r => r.castName), ['ゆな']);
-});

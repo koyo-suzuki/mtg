@@ -3293,19 +3293,6 @@ function renderLeaderModal() {
       ${leaderModalFooter('兼任を記録', 'kennin')}`;
   }
 
-  if (m.type === 'adminEdit') {
-    html = renderLeaderAdminEdit(m);
-  }
-
-  if (m.type === 'adminDelete') {
-    const r = leaderHistoryData?.records.find(x => x.id === m.id);
-    html = `
-      <h2>この記録を削除しますか？</h2>
-      ${r ? `<div class="alert alert-info">${escapeHtml(r.businessDate)}　${escapeHtml(leaderStoreName(r.storeCode))}　${leaderPositionLabel(r.position)}：${escapeHtml(r.castName)}　${lhTimeOf(r.startAt)}〜${lhTimeOf(r.endAt)}</div>` : ''}
-      <p class="lead">削除した記録は集計から外れます。シートには削除した人と日時が残ります。</p>
-      ${leaderModalFooter('削除する', 'adminDelete', 'btn-danger')}`;
-  }
-
   if (m.type === 'del') {
     const r = (State.storeLeaders || []).find(x => x.id === m.id);
     html = `
@@ -3325,10 +3312,6 @@ function leaderCheckedValues(name) {
 async function submitLeaderModal(action, button) {
   const m = leaderModalState;
   if (!m) return;
-  if (action.startsWith('admin')) {
-    await submitLeaderAdmin(action, button);
-    return;
-  }
   button.disabled = true;
   let result = { success: true };
   let message = '';
@@ -3531,19 +3514,6 @@ function lhDateLabel(date) {
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEKDAYS_JA[d.getUTCDay()]})`;
 }
 
-// 営業日と「HH:MM」から日時を作る。朝5時より前は翌日扱い（営業日の区切りと同じ）。
-function lhToIso(businessDate, hhmm) {
-  if (!businessDate || !/^\d{2}:\d{2}$/.test(hhmm || '')) return '';
-  const d = new Date(`${businessDate}T${hhmm}:00+09:00`);
-  if (Number(hhmm.slice(0, 2)) < 5) d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString();
-}
-
-function lhTimeOf(iso) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
 async function showLeaderHistoryScreen(from) {
   if (from) State.leaderHistoryFrom = from;
   hideAllScreens();
@@ -3569,7 +3539,6 @@ async function loadLeaderHistory() {
     return;
   }
   leaderHistoryData = result;
-  if (result.canEdit && !(State.castMaster || []).length) await loadCastMaster();
   renderLeaderHistory();
 }
 
@@ -3588,11 +3557,10 @@ function lhMonthDates(month, today) {
 function renderLeaderHistory() {
   const data = leaderHistoryData;
   if (!data) return;
-  const isAdmin = data.canEdit;
+  const isAdmin = data.scope === 'all';
   const today = data.today;
   const view = isAdmin ? (State.leaderHistoryView || 'store') : 'person';
   const person = isAdmin ? (State.leaderHistoryPerson || '') : (data.summary[0]?.gmail || '');
-  const isUnfinished = r => !r.endAt && r.businessDate < today;
 
   // 上部の切り替え・ボタン
   document.getElementById('lhViewToggle').classList.toggle('hidden', !isAdmin);
@@ -3605,40 +3573,20 @@ function renderLeaderHistory() {
       .map(p => `<option value="${escapeHtml(p.gmail)}">${escapeHtml(p.castName)}</option>`).join('');
     personSelect.value = person;
   }
-  document.getElementById('lhAdd').classList.toggle('hidden', !isAdmin);
   document.getElementById('lhCsv').classList.toggle('hidden', !data.records.length);
-  document.getElementById('lhScopeNote').textContent = !isAdmin
-    ? 'あなたの記録です。間違いは本部に連絡してください'
-    : '日付をタップすると、時間の確認と修正ができます';
-
-  const nameChip = r => {
-    const warn = isUnfinished(r) ? '<span class="lh-warn">終了未入力</span>' : '';
-    return isAdmin
-      ? `<button type="button" class="lh-name" data-lh-edit="${escapeHtml(r.id)}">${escapeHtml(r.castName)}</button>${warn}`
-      : `<span class="lh-name-plain">${escapeHtml(r.castName)}</span>${warn}`;
-  };
-  const chain = rs => rs.slice().sort((a, b) => a.startAt.localeCompare(b.startAt)).map(nameChip).join('<span class="lh-arrow">→</span>');
-  const countTable = (rows, cols) => `<div class="table-wrapper"><table class="table lh-table">
-    <thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  document.getElementById('lhScopeNote').textContent = isAdmin
+    ? '記録の間違いは、スプレッドシートの store_leaders シートで直してください'
+    : 'あなたの記録です。間違いは本部に連絡してください';
 
   let html = '';
   let missingTotal = 0;
-  const unfinishedTotal = data.records.filter(isUnfinished).length;
   const dayNum = date => String(Number(date.slice(8, 10)));
 
-  // 日付の並び。本部はタップで時間の確認・修正。終了の押し忘れは赤枠
+  // 担当した日付を並べ、最後に合計の日数を付ける
   const dateChips = rs => {
-    const byDate = new Map();
-    rs.forEach(r => { if (!byDate.has(r.businessDate)) byDate.set(r.businessDate, r); else if (isUnfinished(r)) byDate.set(r.businessDate, r); });
-    const dates = [...byDate.keys()].sort();
+    const dates = [...new Set(rs.map(r => r.businessDate))].sort();
     if (!dates.length) return '<span class="lh-muted">—</span>';
-    const chips = dates.map(date => {
-      const r = byDate.get(date);
-      const cls = `lh-day-chip ${isUnfinished(r) ? 'is-warn' : ''}`;
-      return isAdmin
-        ? `<button type="button" class="${cls}" data-lh-edit="${escapeHtml(r.id)}" title="${lhDateLabel(date)}">${dayNum(date)}</button>`
-        : `<span class="${cls}">${dayNum(date)}</span>`;
-    }).join('');
+    const chips = dates.map(date => `<span class="lh-day-chip" title="${lhDateLabel(date)}">${dayNum(date)}</span>`).join('');
     return `<span class="lh-chips">${chips}<span class="lh-days-count">${dates.length}日</span></span>`;
   };
 
@@ -3663,16 +3611,13 @@ function renderLeaderHistory() {
         .map(p => `<tr><td class="lh-person-name">${escapeHtml(p.name)}</td>
           <td>${dateChips(p.rows.filter(r => r.position === 'leader'))}</td>
           <td>${dateChips(p.rows.filter(r => r.position === 'sub'))}</td></tr>`).join('');
-      const missingRow = missing.length ? `<tr class="lh-missing-row"><td class="lh-person-name">記録なし</td><td colspan="2"><span class="lh-chips">${missing.map(d => isAdmin
-        ? `<button type="button" class="lh-day-chip is-missing" data-lh-add="${escapeHtml(s.code)}" data-date="${d}" title="${lhDateLabel(d)}に記録を追加">${dayNum(d)}</button>`
-        : `<span class="lh-day-chip is-missing">${dayNum(d)}</span>`).join('')}<span class="lh-days-count">${missing.length}日</span></span></td></tr>` : '';
-      const unfinished = rs.filter(isUnfinished).length;
+      const missingRow = missing.length ? `<tr class="lh-missing-row"><td class="lh-person-name">記録なし</td><td colspan="2"><span class="lh-chips">${missing
+        .map(d => `<span class="lh-day-chip is-missing" title="${lhDateLabel(d)}">${dayNum(d)}</span>`).join('')}<span class="lh-days-count">${missing.length}日</span></span></td></tr>` : '';
       return `<details class="lh-store card" ${stores.length === 1 ? 'open' : ''}>
         <summary class="lh-store-head">
           <span class="lh-store-title">${escapeHtml(s.name)}</span>
           ${pastDates.length ? `<span class="lh-store-meta">店責の記録 ${pastDates.length - missing.length}/${pastDates.length}日</span>` : ''}
           ${missing.length ? `<span class="lh-warn">記録なし ${missing.length}日</span>` : ''}
-          ${unfinished ? `<span class="lh-warn">終了未入力 ${unfinished}</span>` : ''}
         </summary>
         ${peopleRows || missingRow ? `<div class="table-wrapper"><table class="table lh-table lh-dates-table">
           <thead><tr><th>名前</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
@@ -3690,11 +3635,9 @@ function renderLeaderHistory() {
         const sub = inStore.filter(r => r.position === 'sub');
         return `<tr><td class="lh-person-name">${escapeHtml(s.name)}</td><td>${dateChips(lead)}</td><td>${dateChips(sub)}</td></tr>`;
       }).join('');
-      const unfinished = rs.filter(isUnfinished).length;
       return `<details class="lh-store card lh-person-card" ${list.length === 1 ? 'open' : ''}>
         <summary class="lh-store-head"><span class="lh-store-title">${escapeHtml(p.castName)}</span>
-          <span class="lh-store-meta">店責 ${p.leaderDays}日・副店責 ${p.subDays}日${p.kenninDays ? `・兼任 ${p.kenninDays}日` : ''}</span>
-          ${unfinished ? `<span class="lh-warn">終了未入力 ${unfinished}</span>` : ''}</summary>
+          <span class="lh-store-meta">店責 ${p.leaderDays}日・副店責 ${p.subDays}日${p.kenninDays ? `・兼任 ${p.kenninDays}日` : ''}</span></summary>
         <div class="table-wrapper"><table class="table lh-table lh-dates-table">
           <thead><tr><th>店舗</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
           <tbody>${storeRows}</tbody></table></div>
@@ -3704,19 +3647,15 @@ function renderLeaderHistory() {
 
   document.getElementById('lhView').innerHTML = html;
 
-  // 直すものがあるときだけ1行で知らせる（店舗別のときは記録なしも数える）
-  const issues = [
-    unfinishedTotal ? `終了未入力 ${unfinishedTotal}件` : '',
-    view === 'store' && missingTotal ? `店責の記録なし ${missingTotal}日` : '',
-  ].filter(Boolean).join('・');
-  document.getElementById('lhMetrics').innerHTML = isAdmin && issues
-    ? `<div class="alert alert-error lh-issues">確認が必要：${issues}</div>` : '';
+  // 店責の記録がない日があるときだけ1行で知らせる
+  document.getElementById('lhMetrics').innerHTML = isAdmin && view === 'store' && missingTotal
+    ? `<div class="alert alert-error lh-issues">店責の記録がない日：${missingTotal}日</div>` : '';
 }
 
 function leaderHistoryCsv() {
   const data = leaderHistoryData;
   if (!data) return;
-  const person = data.canEdit ? (State.leaderHistoryPerson || '') : '';
+  const person = data.scope === 'all' ? (State.leaderHistoryPerson || '') : '';
   const rows = data.records.filter(r => !person || r.gmail === person);
   const fmt = iso => iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false }) : '';
   const header = ['営業日', '店舗', '役割', '名前', 'メール', '開始', '終了', '時間', '記録した人', 'メモ'];
@@ -3733,97 +3672,6 @@ function leaderHistoryCsv() {
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-}
-
-// ---- 本部による追加・修正 ----
-
-function openLeaderAdminEdit({ id, storeCode, date }) {
-  const r = id ? leaderHistoryData.records.find(x => x.id === id) : null;
-  openLeaderModal({
-    type: 'adminEdit',
-    id: r?.id || '',
-    businessDate: r?.businessDate || date || State.businessDate,
-    storeCode: r?.storeCode || storeCode || (State.leaderHistoryStore !== 'all' && State.leaderHistoryStore) || State.leaderStores?.[0]?.code || '',
-    position: r?.position || 'leader',
-    gmail: r?.gmail || '',
-    start: r ? lhTimeOf(r.startAt) : '',
-    end: r ? lhTimeOf(r.endAt) : '',
-    note: r?.note || '',
-  });
-}
-
-function renderLeaderAdminEdit(m) {
-  const casts = (State.castMaster || []).slice().sort((a, b) => (a.castName || '').localeCompare(b.castName || '', 'ja'));
-  const hasPerson = casts.some(c => c.gmail === m.gmail);
-  const original = m.id ? leaderHistoryData.records.find(x => x.id === m.id) : null;
-  return `
-    <h2>${m.id ? '記録を直す' : '記録を追加'}</h2>
-    <p class="lead">朝5時より前の時刻は、翌日の深夜として扱います。</p>
-    <div class="form-group"><label for="lhEditDate">営業日</label>
-      <input type="date" id="lhEditDate" class="form-control" value="${escapeHtml(m.businessDate)}"></div>
-    <div class="form-group"><label for="lhEditStore">店舗</label>
-      <select id="lhEditStore" class="form-control">${(State.leaderStores || []).map(s => `<option value="${escapeHtml(s.code)}" ${s.code === m.storeCode ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select></div>
-    <div class="form-group"><label>役割</label><div class="chip-list">
-      ${['leader', 'sub'].map(p => `<label class="chip"><input type="radio" name="lhEditPosition" value="${p}" ${m.position === p ? 'checked' : ''}><span>${leaderPositionLabel(p)}</span></label>`).join('')}
-    </div></div>
-    <div class="form-group"><label for="lhEditPerson">担当者</label>
-      <select id="lhEditPerson" class="form-control">
-        <option value="">選んでください</option>
-        ${!hasPerson && original ? `<option value="${escapeHtml(original.gmail)}" selected>${escapeHtml(original.castName)}</option>` : ''}
-        ${casts.map(c => `<option value="${escapeHtml(c.gmail)}" ${c.gmail === m.gmail ? 'selected' : ''}>${escapeHtml(c.castName)}</option>`).join('')}
-      </select></div>
-    <div class="lh-time-row">
-      <div class="form-group"><label for="lhEditStart">開始</label><input type="time" id="lhEditStart" class="form-control" value="${escapeHtml(m.start)}"></div>
-      <div class="form-group"><label for="lhEditEnd">終了</label><input type="time" id="lhEditEnd" class="form-control" value="${escapeHtml(m.end)}"></div>
-    </div>
-    <div class="form-group"><label for="lhEditNote">メモ（修正の理由など）</label>
-      <input type="text" id="lhEditNote" class="form-control" maxlength="200" value="${escapeHtml(m.note)}" placeholder="例：記録漏れのため本部で追加"></div>
-    ${m.id ? '<button type="button" class="btn btn-text btn-block lh-delete" data-leader-act="adminAskDelete">この記録を削除する</button>' : ''}
-    ${leaderModalFooter('保存する', 'adminSave')}`;
-}
-
-async function submitLeaderAdmin(action, button) {
-  const m = leaderModalState;
-  if (action === 'adminAskDelete') {
-    leaderModalState = { ...m, type: 'adminDelete' };
-    renderLeaderModal();
-    return;
-  }
-  button.disabled = true;
-  let result;
-  if (action === 'adminSave') {
-    const businessDate = document.getElementById('lhEditDate').value;
-    const start = document.getElementById('lhEditStart').value;
-    const end = document.getElementById('lhEditEnd').value;
-    if (!start) {
-      button.disabled = false;
-      showToast('error', '開始時刻を入れてください');
-      return;
-    }
-    result = await api('/api/store-leaders/admin/save', {
-      method: 'POST',
-      body: JSON.stringify({
-        id: m.id,
-        businessDate,
-        storeCode: document.getElementById('lhEditStore').value,
-        position: document.querySelector('#leaderModal input[name="lhEditPosition"]:checked')?.value,
-        gmail: document.getElementById('lhEditPerson').value,
-        startAt: lhToIso(businessDate, start),
-        endAt: end ? lhToIso(businessDate, end) : '',
-        note: document.getElementById('lhEditNote').value,
-      }),
-    });
-  } else {
-    result = await api('/api/store-leaders/admin/delete', { method: 'POST', body: JSON.stringify({ id: m.id }) });
-  }
-  if (!result.success) {
-    button.disabled = false;
-    showToast('error', result.error || '保存できませんでした');
-    return;
-  }
-  closeLeaderModal();
-  showToast('success', action === 'adminSave' ? '保存しました' : '削除しました');
-  await loadLeaderHistory();
 }
 
 function setupLeaderHistoryEvents() {
@@ -3863,7 +3711,6 @@ function setupLeaderHistoryEvents() {
     renderLeaderHistory();
   });
   document.getElementById('lhCsv').addEventListener('click', leaderHistoryCsv);
-  document.getElementById('lhAdd').addEventListener('click', () => openLeaderAdminEdit({}));
   document.getElementById('lhViewToggle').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-lh-view]');
     if (!btn) return;
@@ -3873,9 +3720,5 @@ function setupLeaderHistoryEvents() {
   document.getElementById('lhView').addEventListener('click', (e) => {
     const who = e.target.closest('[data-lh-person]');
     if (who) { State.leaderHistoryPerson = who.dataset.lhPerson; renderLeaderHistory(); return; }
-    const edit = e.target.closest('[data-lh-edit]');
-    if (edit) { openLeaderAdminEdit({ id: edit.dataset.lhEdit }); return; }
-    const add = e.target.closest('[data-lh-add]');
-    if (add) openLeaderAdminEdit({ storeCode: add.dataset.lhAdd, date: add.dataset.date });
   });
 }
