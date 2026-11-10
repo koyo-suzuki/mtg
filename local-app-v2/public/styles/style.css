@@ -1678,7 +1678,12 @@ button.lh-seg:hover { border-color: var(--primary-light); background: var(--prim
 /* 店責の記録：店舗別・人別 */
 .lh-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .lh-view-toggle { display: flex; gap: 6px; }
-.lh-view-toggle .dash-date-btn { padding: 8px 18px; font-size: 0.8125rem; white-space: nowrap; }
+.lh-toggle-btn {
+  padding: 8px 18px; border: 1.5px solid var(--border); border-radius: 8px; background: transparent;
+  font-size: 0.8125rem; font-weight: 700; color: var(--text-light); white-space: nowrap; cursor: pointer;
+}
+.lh-toggle-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.lh-toggle-btn:hover:not(.active) { border-color: var(--primary-light); color: var(--primary); }
 .lh-actions { display: flex; gap: 6px; }
 .lh-store { padding: 0 16px; margin-bottom: 10px; }
 .lh-store-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 0; cursor: pointer; list-style: none; }
@@ -1696,3 +1701,20 @@ button.lh-seg:hover { border-color: var(--primary-light); background: var(--prim
 .lh-date { white-space: nowrap; color: var(--text-secondary); font-weight: 700; }
 .lh-muted { color: var(--text-light); }
 .lh-table tr.is-selected td { background: var(--primary-bg); }
+
+/* 店責の記録：日付で見せる */
+.lh-dates-table td { vertical-align: top; padding: 10px; }
+.lh-person-name { font-weight: 700; white-space: nowrap; }
+.lh-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.lh-day-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 5px;
+  border: 1.5px solid var(--border); border-radius: 6px; background: var(--card); font: inherit; font-size: 0.75rem; font-weight: 700;
+  color: var(--text); font-variant-numeric: tabular-nums; }
+button.lh-day-chip { cursor: pointer; }
+button.lh-day-chip:hover { border-color: var(--primary-light); background: var(--primary-bg); }
+.lh-day-chip.is-warn { border-color: var(--danger); color: var(--danger); }
+.lh-day-chip.is-missing { border-style: dashed; border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
+.lh-days-count { font-size: 0.6875rem; color: var(--text-secondary); font-weight: 600; margin-left: 4px; }
+.lh-missing-row td { background: var(--danger-bg); }
+.lh-missing-row .lh-person-name { color: var(--danger); }
+.lh-person-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.lh-store .table-wrapper { margin-bottom: 14px; }

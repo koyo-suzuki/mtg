@@ -3600,7 +3600,7 @@ function renderLeaderHistory() {
   const personSelect = document.getElementById('lhPerson');
   personSelect.classList.toggle('hidden', !isAdmin || view !== 'person');
   if (isAdmin) {
-    personSelect.innerHTML = '<option value="">人を選ぶ</option>' + data.summary
+    personSelect.innerHTML = '<option value="">全員</option>' + data.summary
       .slice().sort((a, b) => a.castName.localeCompare(b.castName, 'ja'))
       .map(p => `<option value="${escapeHtml(p.gmail)}">${escapeHtml(p.castName)}</option>`).join('');
     personSelect.value = person;
@@ -3609,7 +3609,7 @@ function renderLeaderHistory() {
   document.getElementById('lhCsv').classList.toggle('hidden', !data.records.length);
   document.getElementById('lhScopeNote').textContent = !isAdmin
     ? 'あなたの記録です。間違いは本部に連絡してください'
-    : view === 'store' ? '名前をタップすると、時間の確認と修正ができます' : '名前を選ぶと、その人の日ごとの記録が出ます';
+    : '日付をタップすると、時間の確認と修正ができます';
 
   const nameChip = r => {
     const warn = isUnfinished(r) ? '<span class="lh-warn">終了未入力</span>' : '';
@@ -3624,81 +3624,82 @@ function renderLeaderHistory() {
   let html = '';
   let missingTotal = 0;
   const unfinishedTotal = data.records.filter(isUnfinished).length;
+  const dayNum = date => String(Number(date.slice(8, 10)));
+
+  // 日付の並び。本部はタップで時間の確認・修正。終了の押し忘れは赤枠
+  const dateChips = rs => {
+    const byDate = new Map();
+    rs.forEach(r => { if (!byDate.has(r.businessDate)) byDate.set(r.businessDate, r); else if (isUnfinished(r)) byDate.set(r.businessDate, r); });
+    const dates = [...byDate.keys()].sort();
+    if (!dates.length) return '<span class="lh-muted">—</span>';
+    const chips = dates.map(date => {
+      const r = byDate.get(date);
+      const cls = `lh-day-chip ${isUnfinished(r) ? 'is-warn' : ''}`;
+      return isAdmin
+        ? `<button type="button" class="${cls}" data-lh-edit="${escapeHtml(r.id)}" title="${lhDateLabel(date)}">${dayNum(date)}</button>`
+        : `<span class="${cls}">${dayNum(date)}</span>`;
+    }).join('');
+    return `<span class="lh-chips">${chips}<span class="lh-days-count">${dates.length}日</span></span>`;
+  };
 
   if (view === 'store') {
-    // ---- 店舗別：店舗ごとに、日付ごとの店責・副店責と、その店舗での人別の回数 ----
+    // ---- 店舗別：店舗ごとに、誰が何日に店責・副店責をしたか ----
     const storeCode = State.leaderHistoryStore || 'all';
     const stores = (State.leaderStores || []).filter(s => storeCode === 'all' || s.code === storeCode);
-    const dates = lhMonthDates(data.month, today).reverse();
+    const pastDates = lhMonthDates(data.month, today).filter(d => d < today);
     html = stores.map(s => {
       const rs = data.records.filter(r => r.storeCode === s.code);
-      let missing = 0;
-      const dayRows = dates.map(date => {
-        const day = rs.filter(r => r.businessDate === date);
-        const leaders = day.filter(r => r.position === 'leader');
-        const subs = day.filter(r => r.position === 'sub');
-        let leaderCell = chain(leaders);
-        if (!leaders.length) {
-          if (date < today) {
-            missing += 1;
-            leaderCell = isAdmin
-              ? `<button type="button" class="lh-missing" data-lh-add="${escapeHtml(s.code)}" data-date="${date}">記録なし</button>`
-              : '<span class="lh-warn">記録なし</span>';
-          } else {
-            leaderCell = '<span class="lh-muted">まだ</span>';
-          }
-        }
-        return `<tr><td class="lh-date">${lhDateLabel(date)}</td><td>${leaderCell}</td><td>${subs.length ? chain(subs) : '<span class="lh-muted">—</span>'}</td></tr>`;
-      }).join('');
-      missingTotal += missing;
-
+      const leaderDates = new Set(rs.filter(r => r.position === 'leader').map(r => r.businessDate));
+      const missing = pastDates.filter(d => !leaderDates.has(d));
+      missingTotal += missing.length;
       const people = new Map();
       rs.forEach(r => {
-        if (!people.has(r.gmail)) people.set(r.gmail, { name: r.castName, leader: new Set(), sub: new Set() });
-        people.get(r.gmail)[r.position === 'leader' ? 'leader' : 'sub'].add(r.businessDate);
+        if (!people.has(r.gmail)) people.set(r.gmail, { name: r.castName, rows: [] });
+        people.get(r.gmail).rows.push(r);
       });
       const peopleRows = [...people.values()]
-        .sort((a, b) => (b.leader.size - a.leader.size) || (b.sub.size - a.sub.size))
-        .map(p => `<tr><td><b>${escapeHtml(p.name)}</b></td><td>${p.leader.size}日</td><td>${p.sub.size}日</td></tr>`).join('');
-      // 営業が終わった日だけで数える（今日は営業中のため含めない）
-      const pastDates = dates.filter(d => d < today);
-      const leaderDays = new Set(rs.filter(r => r.position === 'leader' && r.businessDate < today).map(r => r.businessDate)).size;
+        .map(p => ({ ...p, leaderCount: new Set(p.rows.filter(r => r.position === 'leader').map(r => r.businessDate)).size }))
+        .sort((a, b) => b.leaderCount - a.leaderCount)
+        .map(p => `<tr><td class="lh-person-name">${escapeHtml(p.name)}</td>
+          <td>${dateChips(p.rows.filter(r => r.position === 'leader'))}</td>
+          <td>${dateChips(p.rows.filter(r => r.position === 'sub'))}</td></tr>`).join('');
+      const missingRow = missing.length ? `<tr class="lh-missing-row"><td class="lh-person-name">記録なし</td><td colspan="2"><span class="lh-chips">${missing.map(d => isAdmin
+        ? `<button type="button" class="lh-day-chip is-missing" data-lh-add="${escapeHtml(s.code)}" data-date="${d}" title="${lhDateLabel(d)}に記録を追加">${dayNum(d)}</button>`
+        : `<span class="lh-day-chip is-missing">${dayNum(d)}</span>`).join('')}<span class="lh-days-count">${missing.length}日</span></span></td></tr>` : '';
       const unfinished = rs.filter(isUnfinished).length;
-
       return `<details class="lh-store card" ${stores.length === 1 ? 'open' : ''}>
         <summary class="lh-store-head">
           <span class="lh-store-title">${escapeHtml(s.name)}</span>
-          ${pastDates.length ? `<span class="lh-store-meta">店責の記録 ${leaderDays}/${pastDates.length}日</span>` : ''}
-          ${missing ? `<span class="lh-warn">記録なし ${missing}日</span>` : ''}
+          ${pastDates.length ? `<span class="lh-store-meta">店責の記録 ${pastDates.length - missing.length}/${pastDates.length}日</span>` : ''}
+          ${missing.length ? `<span class="lh-warn">記録なし ${missing.length}日</span>` : ''}
           ${unfinished ? `<span class="lh-warn">終了未入力 ${unfinished}</span>` : ''}
         </summary>
-        <div class="lh-subhead">この店舗の人別の回数</div>
-        ${peopleRows ? countTable(peopleRows, ['名前', '店責', '副店責']) : '<p class="text-muted text-sm">記録がありません</p>'}
-        <div class="lh-subhead">日ごとの担当</div>
-        <div class="table-wrapper"><table class="table lh-table lh-days">
-          <thead><tr><th>日付</th><th>店責</th><th>副店責</th></tr></thead><tbody>${dayRows}</tbody>
-        </table></div>
+        ${peopleRows || missingRow ? `<div class="table-wrapper"><table class="table lh-table lh-dates-table">
+          <thead><tr><th>名前</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
+          <tbody>${peopleRows}${missingRow}</tbody></table></div>` : '<p class="text-muted text-sm lh-empty">この月の記録はまだありません</p>'}
       </details>`;
     }).join('') || '<p class="text-muted text-center lh-empty">この月の日付がまだありません</p>';
   } else {
-    // ---- 人別：全員の回数と、選んだ人の日ごとの記録 ----
-    const summaryRows = data.summary.map(p => `<tr class="${p.gmail === person ? 'is-selected' : ''}">
-      <td>${isAdmin ? `<button type="button" class="lh-name-btn" data-lh-person="${escapeHtml(p.gmail)}">${escapeHtml(p.castName)}</button>` : `<b>${escapeHtml(p.castName)}</b>`}</td>
-      <td>${p.leaderDays}日</td><td>${p.subDays}日</td><td>${p.kenninDays}日</td></tr>`).join('');
-    const mine = data.records.filter(r => r.gmail === person)
-      .sort((a, b) => b.businessDate.localeCompare(a.businessDate) || a.startAt.localeCompare(b.startAt));
-    const name = data.summary.find(p => p.gmail === person)?.castName || '';
-    const list = mine.map(r => {
-      const role = isAdmin
-        ? `<button type="button" class="lh-name" data-lh-edit="${escapeHtml(r.id)}">${leaderPositionLabel(r.position)}</button>`
-        : `<span class="lh-name-plain">${leaderPositionLabel(r.position)}</span>`;
-      return `<div class="lh-row lh-row-self"><span class="lh-row-store">${lhDateLabel(r.businessDate)}</span><span class="lh-row-people"><span>${escapeHtml(leaderStoreName(r.storeCode))}</span>${role}${isUnfinished(r) ? '<span class="lh-warn">終了未入力</span>' : ''}</span></div>`;
-    }).join('');
-    html = `<div class="card">
-        <div class="card-title">この月の回数</div>
-        ${summaryRows ? countTable(summaryRows, ['名前', '店責', '副店責', '兼任']) : '<p class="text-muted text-sm">この月の記録はまだありません</p>'}
-      </div>
-      ${person ? `<div class="card"><div class="card-title">${escapeHtml(name)}さんの日ごとの記録</div>${list || '<p class="text-muted text-sm">記録がありません</p>'}</div>` : ''}`;
+    // ---- 人別：一人ずつ、どの店舗で何日に店責・副店責をしたか ----
+    const list = data.summary.filter(p => !person || p.gmail === person);
+    html = list.map(p => {
+      const rs = data.records.filter(r => r.gmail === p.gmail);
+      const storeRows = (State.leaderStores || []).filter(s => rs.some(r => r.storeCode === s.code)).map(s => {
+        const inStore = rs.filter(r => r.storeCode === s.code);
+        const lead = inStore.filter(r => r.position === 'leader');
+        const sub = inStore.filter(r => r.position === 'sub');
+        return `<tr><td class="lh-person-name">${escapeHtml(s.name)}</td><td>${dateChips(lead)}</td><td>${dateChips(sub)}</td></tr>`;
+      }).join('');
+      const unfinished = rs.filter(isUnfinished).length;
+      return `<details class="lh-store card lh-person-card" ${list.length === 1 ? 'open' : ''}>
+        <summary class="lh-store-head"><span class="lh-store-title">${escapeHtml(p.castName)}</span>
+          <span class="lh-store-meta">店責 ${p.leaderDays}日・副店責 ${p.subDays}日${p.kenninDays ? `・兼任 ${p.kenninDays}日` : ''}</span>
+          ${unfinished ? `<span class="lh-warn">終了未入力 ${unfinished}</span>` : ''}</summary>
+        <div class="table-wrapper"><table class="table lh-table lh-dates-table">
+          <thead><tr><th>店舗</th><th>店責をした日</th><th>副店責をした日</th></tr></thead>
+          <tbody>${storeRows}</tbody></table></div>
+      </details>`;
+    }).join('') || '<p class="text-muted text-center lh-empty">この月の記録はまだありません</p>';
   }
 
   document.getElementById('lhView').innerHTML = html;
