@@ -1657,3 +1657,20 @@ button.lh-seg:hover { border-color: var(--primary-light); background: var(--prim
 .lh-badge-muted { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); }
 .lh-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .lh-delete { color: var(--danger); margin: -4px 0 8px; }
+
+/* 店責の記録：シンプル表示 */
+.lh-issues { margin-bottom: 16px; }
+.lh-row { display: grid; grid-template-columns: 7.5em 1fr; gap: 10px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
+.lh-row:last-child { border-bottom: 0; }
+.lh-row-store { font-weight: 700; color: var(--text-secondary); font-size: 0.8125rem; }
+.lh-row-people { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; min-width: 0; }
+.lh-name { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--text); cursor: pointer; text-decoration: underline; text-decoration-color: var(--primary-light); text-underline-offset: 3px; }
+.lh-name:hover { color: var(--primary); }
+.lh-name-plain { font-weight: 700; }
+.lh-sub { color: var(--text-secondary); margin-left: 6px; display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; }
+.lh-sub .lh-name { font-weight: 600; color: var(--text-secondary); }
+.lh-warn { font-size: 0.6875rem; font-weight: 700; color: var(--danger); }
+.lh-missing { border: 0; background: none; padding: 0; font: inherit; font-size: 0.8125rem; font-weight: 700; color: var(--danger); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.lh-table { min-width: 0; }
+.lh-missing.is-pending { color: var(--text-light); text-decoration: none; }
+.lh-row-self { grid-template-columns: 5.5em 1fr; }
